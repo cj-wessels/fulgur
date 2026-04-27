@@ -9,3 +9,8 @@ website/.venv
 
 # wasm-pack build artifacts (regenerated locally; not checked in)
 examples/wasm-demo/pkg/
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key

@@ -1,0 +1,1 @@
+{"id":"int-3f1d512b","kind":"field_change","created_at":"2026-04-27T09:16:15.769656Z","actor":"Coen Wessels","issue_id":"fulgur-5qa","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Plan document added in docs/plans/2026-04-27-elixir-binding-mvp.md."}}
