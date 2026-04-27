@@ -69,6 +69,7 @@ pdf = Fulgur.Engine.render_html!(engine, "<h1>Hello, world!</h1>")
 
 `Fulgur.Document` renders each section with its own engine options, merges the
 PDFs, and can stamp page numbers only on selected sections.
+See [DOCUMENT_API.md](DOCUMENT_API.md) for the full integration guide.
 
 ```elixir
 sections = [
