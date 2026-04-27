@@ -4,9 +4,9 @@
 
 **Goal:** Add a Rustler-based Elixir binding under `crates/fulgur-elixir/` so Elixir/Phoenix applications can convert HTML/CSS to PDF through `Fulgur.Engine` / `Fulgur.AssetBundle` / `Fulgur.PageSize` / `Fulgur.Margin`. Keep Hex publishing and precompiled NIF distribution out of scope for this MVP; first make the source-build package work reliably.
 
-**Architecture:** Implement the Elixir side as a Mix project (`crates/fulgur-elixir`). Implement the NIF in a Rust crate at `native/fulgur_elixir/` using `rustler` 0.36 to wrap the `fulgur` crate. Store `Engine`, `AssetBundle`, and `Pdf` values in Rust `ResourceArc`s. Run render functions on dirty schedulers (`DirtyCpu`) so long PDF renders do not block BEAM schedulers. Normalize return values to Elixir conventions: `{:ok, value}` / `{:error, %Fulgur.Error{}}`.
+**Architecture:** Implement the Elixir side as a Mix project (`crates/fulgur-elixir`). Implement the NIF in a Rust crate at `native/fulgur_elixir/` using `rustler` 0.37 to wrap the `fulgur` crate. Store `Engine`, `AssetBundle`, and `Pdf` values in Rust `ResourceArc`s. Run render functions on dirty schedulers (`DirtyCpu`) so long PDF renders do not block BEAM schedulers. Normalize return values to Elixir conventions: `{:ok, value}` / `{:error, %Fulgur.Error{}}`.
 
-**Tech Stack:** Elixir 1.16+, Erlang/OTP 26+, Rust 1.85+, Rustler 0.36, `fulgur` (workspace path dep), ExUnit, Mix.
+**Tech Stack:** Elixir 1.16+, Erlang/OTP 26+, Rust 1.85+, Rustler 0.37, `fulgur` (workspace path dep), ExUnit, Mix.
 
 **Reference:** `crates/pyfulgur/` and `crates/fulgur-ruby/` are the existing binding MVPs. Mirror their API surface, option mapping, error mapping, and scheduler-release strategy in an Elixir/Rustler shape.
 
@@ -146,7 +146,7 @@ defmodule Fulgur.MixProject do
 
   defp deps do
     [
-      {:rustler, "~> 0.36", runtime: false}
+      {:rustler, "~> 0.37", runtime: false}
     ]
   end
 
@@ -188,7 +188,7 @@ Elixir bindings for fulgur.
 
 ```toml
 [package]
-name = "fulgur-elixir"
+name = "fulgur_elixir"
 version = "0.0.1"
 edition.workspace = true
 rust-version.workspace = true
@@ -203,7 +203,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 fulgur = { path = "../../../fulgur" }
-rustler = "0.36"
+rustler = "0.37.3"
 base64 = "0.22"
 ```
 
@@ -249,7 +249,7 @@ fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
-rustler::init!("Elixir.Fulgur.Native", [version]);
+rustler::init!("Elixir.Fulgur.Native");
 ```
 
 **Step 6: smoke test**
@@ -276,7 +276,7 @@ cd ../..
 cargo check --workspace
 ```
 
-Expected: Mix test passes and workspace cargo check includes `fulgur-elixir`.
+Expected: Mix test passes and workspace cargo check includes `fulgur_elixir`.
 
 ---
 
@@ -507,24 +507,13 @@ fn asset_bundle_add_image_file<'a>(
 **Step 3: Register resources and NIFs in init**
 
 ```rust
+impl rustler::Resource for AssetBundleResource {}
+
 fn load(env: Env, _info: Term) -> bool {
-    rustler::resource!(AssetBundleResource, env);
-    true
+    env.register::<AssetBundleResource>().is_ok()
 }
 
-rustler::init!(
-    "Elixir.Fulgur.Native",
-    [
-        version,
-        asset_bundle_new,
-        asset_bundle_add_css,
-        asset_bundle_add_css_file,
-        asset_bundle_add_font_file,
-        asset_bundle_add_image,
-        asset_bundle_add_image_file
-    ],
-    load = load
-);
+rustler::init!("Elixir.Fulgur.Native", load = load);
 ```
 
 Also add native declarations to `crates/fulgur-elixir/lib/fulgur/native.ex` when each NIF is introduced:
@@ -879,15 +868,15 @@ Add native declarations:
 def engine_new(_opts), do: :erlang.nif_error(:nif_not_loaded)
 ```
 
-Also add `engine_new` to the `rustler::init!` NIF list.
-
 Update the Rustler load function from Task 3 so it registers both resource types:
 
 ```rust
+impl rustler::Resource for AssetBundleResource {}
+impl rustler::Resource for EngineResource {}
+
 fn load(env: Env, _info: Term) -> bool {
-    rustler::resource!(AssetBundleResource, env);
-    rustler::resource!(EngineResource, env);
-    true
+    env.register::<AssetBundleResource>().is_ok()
+        && env.register::<EngineResource>().is_ok()
 }
 ```
 
@@ -937,7 +926,7 @@ cd crates/fulgur-elixir
 mix format
 mix test
 cd ../..
-cargo check -p fulgur-elixir
+cargo check -p fulgur_elixir
 ```
 
 ---
@@ -1001,11 +990,14 @@ fn pdf_to_base64(pdf: ResourceArc<PdfResource>) -> String {
 Update the Rustler load function so it registers all resource types:
 
 ```rust
+impl rustler::Resource for AssetBundleResource {}
+impl rustler::Resource for EngineResource {}
+impl rustler::Resource for PdfResource {}
+
 fn load(env: Env, _info: Term) -> bool {
-    rustler::resource!(AssetBundleResource, env);
-    rustler::resource!(EngineResource, env);
-    rustler::resource!(PdfResource, env);
-    true
+    env.register::<AssetBundleResource>().is_ok()
+        && env.register::<EngineResource>().is_ok()
+        && env.register::<PdfResource>().is_ok()
 }
 ```
 
@@ -1060,8 +1052,6 @@ def engine_render_html_to_file(_engine, _html, _path), do: :erlang.nif_error(:ni
 def pdf_to_binary(_pdf), do: :erlang.nif_error(:nif_not_loaded)
 def pdf_to_base64(_pdf), do: :erlang.nif_error(:nif_not_loaded)
 ```
-
-Also add `engine_render_html`, `engine_render_html_to_file`, `pdf_to_binary`, and `pdf_to_base64` to the `rustler::init!` NIF list.
 
 `lib/fulgur/pdf.ex`:
 
@@ -1242,10 +1232,10 @@ mix test
 cd /Users/cjw/Experiments/fulgur
 cargo fmt --check
 cargo check --workspace
-cargo test -p fulgur-elixir
+cargo test -p fulgur_elixir
 ```
 
-Expected: all pass. If `cargo test -p fulgur-elixir` is not meaningful because it only contains NIF functions loaded by BEAM, `cargo check -p fulgur-elixir` is sufficient and Mix tests are the behavioral gate.
+Expected: all pass. If `cargo test -p fulgur_elixir` is not meaningful because it only contains NIF functions loaded by BEAM, `cargo check -p fulgur_elixir` is sufficient and Mix tests are the behavioral gate.
 
 **Step 2: Elixir checks**
 

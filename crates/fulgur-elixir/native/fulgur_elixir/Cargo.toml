@@ -1,0 +1,18 @@
+[package]
+name = "fulgur_elixir"
+version = "0.0.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+
+[lib]
+name = "fulgur_elixir"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+base64 = "0.22"
+fulgur = { path = "../../../fulgur" }
+rustler = "0.37.3"

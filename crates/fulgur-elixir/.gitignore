@@ -1,0 +1,5 @@
+/_build/
+/deps/
+/priv/native/
+/*.tar
+/.expert/
