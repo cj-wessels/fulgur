@@ -3,7 +3,15 @@ defmodule Fulgur.Document do
   Compose multi-section PDFs with per-section render options.
   """
 
-  alias Fulgur.{Document.PageNumbers, Document.Section, Engine, Error, Margin, Pdf}
+  alias Fulgur.{
+    Document.PageFooter,
+    Document.PageNumbers,
+    Document.Section,
+    Engine,
+    Error,
+    Margin,
+    Pdf
+  }
 
   @engine_keys ~w(page_size margin landscape title author lang bookmarks assets)a
   @section_keys ~w(html margin page_size landscape assets numbered background_image background_image_file)a
@@ -21,12 +29,12 @@ defmodule Fulgur.Document do
   def section!(name, opts), do: section(name, opts)
 
   def render(sections, opts \\ []) when is_list(sections) and is_list(opts) do
-    with :ok <- validate_keys(opts, @engine_keys ++ [:page_numbers], "document"),
+    with :ok <- validate_keys(opts, @engine_keys ++ [:page_numbers, :page_footer], "document"),
+         :ok <- validate_stamp_options(opts),
          {:ok, normalized_sections} <- normalize_sections(sections),
          {:ok, rendered} <- render_sections(normalized_sections, opts),
-         {:ok, page_number_opts} <-
-           normalize_page_numbers(Keyword.get(opts, :page_numbers, false)),
-         {:ok, ref} <- Fulgur.Native.document_compose(rendered, page_number_opts) do
+         {:ok, stamp_opts} <- normalize_stamp_options(opts),
+         {:ok, ref} <- Fulgur.Native.document_compose(rendered, stamp_opts) do
       {:ok, %Pdf{ref: ref}}
     else
       {:error, %Error{} = error} -> {:error, error}
@@ -132,6 +140,24 @@ defmodule Fulgur.Document do
   defp maybe_put(opts, _key, nil), do: opts
   defp maybe_put(opts, key, value), do: Keyword.put(opts, key, value)
 
+  defp validate_stamp_options(opts) do
+    if Keyword.get(opts, :page_numbers, false) && Keyword.get(opts, :page_footer, false) do
+      error(:argument, "page_numbers and page_footer cannot be used together")
+    else
+      :ok
+    end
+  end
+
+  defp normalize_stamp_options(opts) do
+    case Keyword.fetch(opts, :page_footer) do
+      {:ok, page_footer} when page_footer not in [false, nil] ->
+        normalize_page_footer(page_footer)
+
+      _ ->
+        normalize_page_numbers(Keyword.get(opts, :page_numbers, false))
+    end
+  end
+
   defp section_background_image(%Section{background_image: image}) when is_binary(image) do
     {:ok, image}
   end
@@ -212,6 +238,69 @@ defmodule Fulgur.Document do
 
   defp normalize_page_numbers(_),
     do: error(:argument, "page_numbers must be false, a keyword list, or PageNumbers")
+
+  defp normalize_page_footer(%PageFooter{} = opts),
+    do: normalize_page_footer(Map.from_struct(opts))
+
+  defp normalize_page_footer(opts) when is_list(opts) or is_map(opts) do
+    opts = Enum.into(opts, %{})
+
+    case Map.keys(opts) -- [:left, :center, :right, :assigns, :bottom_mm, :font_size, :color] do
+      [key | _] ->
+        error(:argument, "unknown page footer option #{inspect(key)}")
+
+      [] ->
+        footer = struct(PageFooter, opts)
+
+        cond do
+          not valid_optional_string?(footer.left) ->
+            error(:argument, "page footer left must be a string or nil")
+
+          not valid_optional_string?(footer.center) ->
+            error(:argument, "page footer center must be a string or nil")
+
+          not valid_optional_string?(footer.right) ->
+            error(:argument, "page footer right must be a string or nil")
+
+          is_nil(footer.left) and is_nil(footer.center) and is_nil(footer.right) ->
+            error(:argument, "page footer must define at least one of left, center, or right")
+
+          not is_map(footer.assigns) ->
+            error(:argument, "page footer assigns must be a map")
+
+          not is_number(footer.bottom_mm) ->
+            error(:argument, "page footer bottom_mm must be a number")
+
+          not is_number(footer.font_size) ->
+            error(:argument, "page footer font_size must be a number")
+
+          not valid_color?(footer.color) ->
+            error(:argument, "page footer color must be an {r, g, b} tuple")
+
+          true ->
+            {:ok,
+             [
+               page_footer: true,
+               left: footer.left || "",
+               center: footer.center || "",
+               right: footer.right || "",
+               assigns: normalize_assigns(footer.assigns),
+               bottom_mm: footer.bottom_mm,
+               font_size: footer.font_size,
+               color: footer.color
+             ]}
+        end
+    end
+  end
+
+  defp normalize_page_footer(_),
+    do: error(:argument, "page_footer must be false, a keyword list, or PageFooter")
+
+  defp normalize_assigns(assigns) do
+    Enum.map(assigns, fn {key, value} -> {to_string(key), to_string(value)} end)
+  end
+
+  defp valid_optional_string?(value), do: is_nil(value) or is_binary(value)
 
   defp valid_color?({r, g, b}) do
     Enum.all?([r, g, b], &(is_integer(&1) and &1 >= 0 and &1 <= 255))

@@ -11,12 +11,14 @@ mod atoms {
         argument,
         asset,
         assets,
+        assigns,
         author,
         bookmarks,
         bottom_center,
         bottom_left,
         bottom_right,
         bottom_mm,
+        center,
         color,
         custom,
         document,
@@ -28,15 +30,18 @@ mod atoms {
         io,
         lang,
         landscape,
+        left,
         letter,
         margin,
         mm,
         native,
         ok,
+        page_footer,
         page_size,
         position,
         pt,
         render,
+        right,
         title
     }
 }
@@ -169,11 +174,41 @@ struct PageNumberOptions {
     color: (f32, f32, f32),
 }
 
-fn decode_page_number_options(
+struct PageFooterOptions {
+    left: String,
+    center: String,
+    right: String,
+    assigns: Vec<(String, String)>,
+    bottom_pt: f32,
+    font_size: f32,
+    color: (f32, f32, f32),
+}
+
+enum PageStampOptions {
+    Number(PageNumberOptions),
+    Footer(PageFooterOptions),
+}
+
+fn decode_page_stamp_options(
     opts: Vec<(rustler::Atom, Term<'_>)>,
-) -> Result<Option<PageNumberOptions>, String> {
+) -> Result<Option<PageStampOptions>, String> {
     if opts.is_empty() {
         return Ok(None);
+    }
+
+    if opts.iter().any(|(key, _)| *key == atoms::page_footer()) {
+        return decode_page_footer_options(opts)
+            .map(|options| Some(PageStampOptions::Footer(options)));
+    }
+
+    decode_page_number_options(opts).map(|options| Some(PageStampOptions::Number(options)))
+}
+
+fn decode_page_number_options(
+    opts: Vec<(rustler::Atom, Term<'_>)>,
+) -> Result<PageNumberOptions, String> {
+    if opts.is_empty() {
+        return Err("page number options must not be empty".to_string());
     }
 
     let mut format = "Page {page} of {total}".to_string();
@@ -208,25 +243,80 @@ fn decode_page_number_options(
         } else if key == atoms::font_size() {
             font_size = decode_number(value, "page number font_size")?;
         } else if key == atoms::color() {
-            let (r, g, b): (i64, i64, i64) = value
-                .decode()
-                .map_err(|_| "page number color must be {r, g, b}".to_string())?;
-            if !(0..=255).contains(&r) || !(0..=255).contains(&g) || !(0..=255).contains(&b) {
-                return Err("page number color components must be 0..255".to_string());
-            }
-            color = (r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0);
+            color = decode_rgb_color(value, "page number color")?;
         } else {
             return Err("unknown page number option".to_string());
         }
     }
 
-    Ok(Some(PageNumberOptions {
+    Ok(PageNumberOptions {
         format,
         position,
         bottom_pt,
         font_size,
         color,
-    }))
+    })
+}
+
+fn decode_page_footer_options(
+    opts: Vec<(rustler::Atom, Term<'_>)>,
+) -> Result<PageFooterOptions, String> {
+    let mut footer = PageFooterOptions {
+        left: String::new(),
+        center: String::new(),
+        right: String::new(),
+        assigns: Vec::new(),
+        bottom_pt: 10.0_f32 * 72.0 / 25.4,
+        font_size: 11.0_f32,
+        color: (0.0_f32, 0.0_f32, 0.0_f32),
+    };
+
+    for (key, value) in opts {
+        if key == atoms::page_footer() {
+            let enabled = value
+                .decode::<bool>()
+                .map_err(|_| "page_footer must be a boolean".to_string())?;
+            if !enabled {
+                return Err("page_footer must be true when footer options are provided".to_string());
+            }
+        } else if key == atoms::left() {
+            footer.left = value
+                .decode::<String>()
+                .map_err(|_| "page footer left must be a string".to_string())?;
+        } else if key == atoms::center() {
+            footer.center = value
+                .decode::<String>()
+                .map_err(|_| "page footer center must be a string".to_string())?;
+        } else if key == atoms::right() {
+            footer.right = value
+                .decode::<String>()
+                .map_err(|_| "page footer right must be a string".to_string())?;
+        } else if key == atoms::assigns() {
+            footer.assigns = value
+                .decode::<Vec<(String, String)>>()
+                .map_err(|_| "page footer assigns must be string key/value pairs".to_string())?;
+        } else if key == atoms::bottom_mm() {
+            footer.bottom_pt = decode_number(value, "page footer bottom_mm")? * 72.0 / 25.4;
+        } else if key == atoms::font_size() {
+            footer.font_size = decode_number(value, "page footer font_size")?;
+        } else if key == atoms::color() {
+            footer.color = decode_rgb_color(value, "page footer color")?;
+        } else {
+            return Err("unknown page footer option".to_string());
+        }
+    }
+
+    Ok(footer)
+}
+
+fn decode_rgb_color(value: Term<'_>, field: &str) -> Result<(f32, f32, f32), String> {
+    let (r, g, b): (i64, i64, i64) = value
+        .decode()
+        .map_err(|_| format!("{field} must be {{r, g, b}}"))?;
+    if !(0..=255).contains(&r) || !(0..=255).contains(&g) || !(0..=255).contains(&b) {
+        return Err(format!("{field} components must be 0..255"));
+    }
+    Ok((r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0))
 }
 
 fn count_pdf_pages(bytes: &[u8]) -> Result<usize, String> {
@@ -236,7 +326,7 @@ fn count_pdf_pages(bytes: &[u8]) -> Result<usize, String> {
 
 fn compose_pdf_sections(
     sections: Vec<(Vec<u8>, bool, f32, Option<Vec<u8>>)>,
-    page_number_options: Option<PageNumberOptions>,
+    page_stamp_options: Option<PageStampOptions>,
 ) -> Result<Vec<u8>, String> {
     if sections.is_empty() {
         return Err("document must contain at least one section".to_string());
@@ -344,8 +434,8 @@ fn compose_pdf_sections(
 
     stamp_page_backgrounds(&mut document, &page_backgrounds)?;
 
-    if let Some(options) = page_number_options {
-        stamp_page_numbers(
+    if let Some(options) = page_stamp_options {
+        stamp_page_marks(
             &mut document,
             &numbered_pages,
             &page_bottom_margins,
@@ -441,6 +531,22 @@ fn stamp_page_backgrounds(
     }
 
     Ok(())
+}
+
+fn stamp_page_marks(
+    document: &mut lopdf::Document,
+    numbered_pages: &[bool],
+    page_bottom_margins: &[f32],
+    options: &PageStampOptions,
+) -> Result<(), String> {
+    match options {
+        PageStampOptions::Number(options) => {
+            stamp_page_numbers(document, numbered_pages, page_bottom_margins, options)
+        }
+        PageStampOptions::Footer(options) => {
+            stamp_page_footer(document, numbered_pages, page_bottom_margins, options)
+        }
+    }
 }
 
 fn stamp_page_numbers(
@@ -540,6 +646,150 @@ fn stamp_page_numbers(
     }
 
     Ok(())
+}
+
+fn stamp_page_footer(
+    document: &mut lopdf::Document,
+    numbered_pages: &[bool],
+    page_bottom_margins: &[f32],
+    options: &PageFooterOptions,
+) -> Result<(), String> {
+    use lopdf::content::{Content, Operation};
+    use lopdf::{Dictionary, Object, Stream};
+
+    let pages = document.get_pages();
+    let total = numbered_pages.iter().filter(|&&numbered| numbered).count();
+    if total == 0 {
+        return Ok(());
+    }
+
+    let font_id = document.add_object(dictionary! {
+        "Type" => "Font",
+        "Subtype" => "Type1",
+        "BaseFont" => "Helvetica",
+    });
+
+    let mut visible_page = 0usize;
+    for (((_idx, (_page_number, page_id)), numbered), bottom_margin_pt) in pages
+        .iter()
+        .enumerate()
+        .zip(numbered_pages)
+        .zip(page_bottom_margins)
+    {
+        if !numbered {
+            continue;
+        }
+
+        visible_page += 1;
+        let left =
+            resolve_footer_placeholders(&options.left, visible_page, total, &options.assigns);
+        let center =
+            resolve_footer_placeholders(&options.center, visible_page, total, &options.assigns);
+        let right =
+            resolve_footer_placeholders(&options.right, visible_page, total, &options.assigns);
+
+        let (width, _height) = page_media_box(document, *page_id)?;
+        let side_margin = options.bottom_pt;
+        let y = options.bottom_pt.max(bottom_margin_pt / 2.0);
+        let mut operations = vec![
+            Operation::new("q", vec![]),
+            Operation::new("BT", vec![]),
+            Operation::new(
+                "rg",
+                vec![
+                    Object::Real(options.color.0),
+                    Object::Real(options.color.1),
+                    Object::Real(options.color.2),
+                ],
+            ),
+            Operation::new(
+                "Tf",
+                vec![
+                    Object::Name(b"FulgurPageNumber".to_vec()),
+                    Object::Real(options.font_size),
+                ],
+            ),
+        ];
+
+        push_footer_text(&mut operations, &left, side_margin, y);
+        let center_width = approximate_helvetica_width(&center, options.font_size);
+        push_footer_text(
+            &mut operations,
+            &center,
+            ((width - center_width) / 2.0).max(0.0),
+            y,
+        );
+        let right_width = approximate_helvetica_width(&right, options.font_size);
+        push_footer_text(
+            &mut operations,
+            &right,
+            (width - side_margin - right_width).max(0.0),
+            y,
+        );
+
+        operations.push(Operation::new("ET", vec![]));
+        operations.push(Operation::new("Q", vec![]));
+
+        ensure_page_number_font(document, *page_id, font_id)?;
+
+        let content = Content { operations };
+        let content_id = document.add_object(Stream::new(
+            Dictionary::new(),
+            content.encode().map_err(|e| e.to_string())?,
+        ));
+
+        let page = document
+            .get_object_mut(*page_id)
+            .map_err(|e| e.to_string())?
+            .as_dict_mut()
+            .map_err(|e| e.to_string())?;
+        let mut contents = match page.get(b"Contents") {
+            Ok(Object::Array(items)) => items.clone(),
+            Ok(existing) => vec![existing.clone()],
+            Err(_) => Vec::new(),
+        };
+        contents.push(Object::Reference(content_id));
+        page.set("Contents", Object::Array(contents));
+    }
+
+    Ok(())
+}
+
+fn push_footer_text(operations: &mut Vec<lopdf::content::Operation>, text: &str, x: f32, y: f32) {
+    if text.is_empty() {
+        return;
+    }
+
+    operations.push(lopdf::content::Operation::new(
+        "Tm",
+        vec![
+            lopdf::Object::Real(1.0),
+            lopdf::Object::Real(0.0),
+            lopdf::Object::Real(0.0),
+            lopdf::Object::Real(1.0),
+            lopdf::Object::Real(x),
+            lopdf::Object::Real(y),
+        ],
+    ));
+    operations.push(lopdf::content::Operation::new(
+        "Tj",
+        vec![lopdf::Object::string_literal(text)],
+    ));
+}
+
+fn resolve_footer_placeholders(
+    template: &str,
+    page: usize,
+    total: usize,
+    assigns: &[(String, String)],
+) -> String {
+    let mut resolved = template
+        .replace("{page}", &page.to_string())
+        .replace("{total}", &total.to_string());
+    for (key, value) in assigns {
+        resolved = resolved.replace(&format!("{{{key}}}"), value);
+    }
+    resolved
 }
 
 fn image_xobject_from_bytes(bytes: &[u8]) -> Result<lopdf::Stream, String> {
@@ -851,9 +1101,9 @@ fn pdf_page_count<'a>(env: Env<'a>, pdf: ResourceArc<PdfResource>) -> Term<'a> {
 fn document_compose<'a>(
     env: Env<'a>,
     sections: Vec<(ResourceArc<PdfResource>, bool, f32, Option<Binary<'a>>)>,
-    page_number_opts: Vec<(rustler::Atom, Term<'a>)>,
+    page_stamp_opts: Vec<(rustler::Atom, Term<'a>)>,
 ) -> Term<'a> {
-    let page_number_options = match decode_page_number_options(page_number_opts) {
+    let page_stamp_options = match decode_page_stamp_options(page_stamp_opts) {
         Ok(options) => options,
         Err(message) => return error(env, atoms::argument(), message),
     };
@@ -870,7 +1120,7 @@ fn document_compose<'a>(
         })
         .collect();
 
-    match compose_pdf_sections(section_bytes, page_number_options) {
+    match compose_pdf_sections(section_bytes, page_stamp_options) {
         Ok(bytes) => ok(env, ResourceArc::new(PdfResource { bytes })),
         Err(message) => error(env, atoms::document(), message),
     }

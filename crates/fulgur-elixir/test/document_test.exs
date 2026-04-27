@@ -50,6 +50,49 @@ defmodule Fulgur.DocumentTest do
     refute Fulgur.Pdf.to_binary(pdf) =~ "Page 1"
   end
 
+  test "can stamp a structured page footer" do
+    sections = [
+      Fulgur.Document.section(:body,
+        html: page_html("Body"),
+        margin: Fulgur.Margin.uniform_mm(20),
+        numbered: true
+      )
+    ]
+
+    pdf =
+      Fulgur.Document.render!(sections,
+        page_size: :a4,
+        page_footer: [
+          left: "Offertenummer: {offer_number}",
+          center: "Pagina {page} van {total}",
+          right: "Paraaf: __________",
+          assigns: %{offer_number: "15025-0099"},
+          font_size: 11
+        ]
+      )
+
+    binary = Fulgur.Pdf.to_binary(pdf)
+
+    assert binary =~ "Offertenummer: 15025-0099"
+    assert binary =~ "Pagina 1 van 1"
+    assert binary =~ "Paraaf: __________"
+    assert binary =~ "0 0 0 rg"
+  end
+
+  test "does not allow page numbers and page footer together" do
+    sections = [
+      Fulgur.Document.section(:body, html: page_html("Body"), numbered: true)
+    ]
+
+    assert {:error, %Fulgur.Error{type: :argument, message: message}} =
+             Fulgur.Document.render(sections,
+               page_numbers: true,
+               page_footer: [center: "Pagina {page} van {total}"]
+             )
+
+    assert message =~ "page_numbers and page_footer cannot be used together"
+  end
+
   test "can stamp a full-page section background behind content" do
     sections = [
       Fulgur.Document.section(:body,

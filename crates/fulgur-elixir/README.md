@@ -95,11 +95,13 @@ pdf =
   Fulgur.Document.render!(sections,
     page_size: :a4,
     assets: assets,
-    page_numbers: [
-      format: "Pagina {page} van {total}",
-      position: :bottom_center,
+    page_footer: [
+      left: "Offertenummer: {offer_number}",
+      center: "Pagina {page} van {total}",
+      right: "Paraaf: __________",
+      assigns: %{offer_number: "15025-0099"},
       bottom_mm: 10,
-      font_size: 9,
+      font_size: 11,
       color: {0, 0, 0}
     ]
   )
@@ -125,6 +127,7 @@ end
 - `Fulgur.Engine.render_html/2`, `render_html!/2`
 - `Fulgur.Engine.render_html_to_file/3`
 - `Fulgur.Document.section/2`, `render/2`, `render!/2`
+- `Fulgur.Document.PageNumbers`, `Fulgur.Document.PageFooter`
 - `Fulgur.AssetBundle`
 - `Fulgur.PageSize`
 - `Fulgur.Margin`

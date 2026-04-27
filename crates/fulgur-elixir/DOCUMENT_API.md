@@ -154,6 +154,46 @@ If `page_numbers` is omitted or set to `false`, no page numbers are stamped.
 Fulgur.Document.render!(sections, page_numbers: false)
 ```
 
+## Structured Page Footer
+
+Use `page_footer` when the footer needs more than a single page-number label,
+for example an offer number on the left, page numbering in the center, and an
+initials line on the right.
+
+```elixir
+pdf =
+  Fulgur.Document.render!(sections,
+    page_size: :a4,
+    page_footer: [
+      left: "Offertenummer: {offer_number}",
+      center: "Pagina {page} van {total}",
+      right: "Paraaf: __________",
+      assigns: %{offer_number: "15025-0099"},
+      bottom_mm: 10,
+      font_size: 11,
+      color: {0, 0, 0}
+    ]
+  )
+```
+
+Supported placeholders:
+
+- `{page}` - the visible numbered page index.
+- `{total}` - total number of numbered pages.
+- `{name}` - any value from `assigns`, for example `{offer_number}`.
+
+The footer is stamped only on pages from sections with `numbered: true`. Cover
+and backcover sections can still use `numbered: false`.
+
+The default color is black, `{0, 0, 0}`. Footer placement uses the same
+bottom-margin-aware behavior as `page_numbers`: the footer is placed at least
+`bottom_mm` from the page edge, but sections with a larger bottom margin place
+the footer halfway inside that bottom margin.
+
+`page_footer` and `page_numbers` are mutually exclusive. Use `page_numbers` for
+the simple single-label shortcut, and `page_footer` for multi-zone quote
+footers.
+
 ## Example Page Number Result
 
 For this structure:
