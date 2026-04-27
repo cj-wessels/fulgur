@@ -10,6 +10,7 @@ defmodule Fulgur.Pdf do
   def to_binary(%__MODULE__{} = pdf), do: Fulgur.Native.pdf_to_binary(pdf.ref)
   def to_base64(%__MODULE__{} = pdf), do: Fulgur.Native.pdf_to_base64(pdf.ref)
   def to_data_uri(%__MODULE__{} = pdf), do: "data:application/pdf;base64," <> to_base64(pdf)
+  def page_count(%__MODULE__{} = pdf), do: Fulgur.Native.pdf_page_count(pdf.ref)
 
   def write_to_path(%__MODULE__{} = pdf, path) when is_binary(path) do
     File.write(path, to_binary(pdf))

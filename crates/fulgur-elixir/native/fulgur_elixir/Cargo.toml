@@ -15,4 +15,5 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 base64 = "0.22"
 fulgur = { path = "../../../fulgur" }
+lopdf = "0.40.0"
 rustler = "0.37.3"

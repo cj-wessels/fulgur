@@ -39,4 +39,7 @@ defmodule Fulgur.Native do
 
   def pdf_to_binary(_pdf), do: :erlang.nif_error(:nif_not_loaded)
   def pdf_to_base64(_pdf), do: :erlang.nif_error(:nif_not_loaded)
+  def pdf_page_count(_pdf), do: :erlang.nif_error(:nif_not_loaded)
+
+  def document_compose(_sections, _page_number_opts), do: :erlang.nif_error(:nif_not_loaded)
 end

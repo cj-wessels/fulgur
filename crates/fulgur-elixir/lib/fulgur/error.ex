@@ -5,7 +5,7 @@ defmodule Fulgur.Error do
 
   defexception [:type, :message]
 
-  @type type :: :render | :asset | :argument | :io | :native
+  @type type :: :render | :asset | :argument | :io | :native | :document
   @type t :: %__MODULE__{type: type(), message: String.t()}
 
   @impl true

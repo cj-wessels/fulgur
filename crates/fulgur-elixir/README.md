@@ -65,6 +65,43 @@ pdf = Fulgur.Engine.render_html!(engine, "<h1>Hello, world!</h1>")
 :ok = Fulgur.Pdf.write_to_path(pdf, "output.pdf")
 ```
 
+## Multi-section Documents
+
+`Fulgur.Document` renders each section with its own engine options, merges the
+PDFs, and can stamp page numbers only on selected sections.
+
+```elixir
+sections = [
+  Fulgur.Document.section(:cover,
+    html: cover_html,
+    margin: Fulgur.Margin.uniform_mm(0),
+    numbered: false
+  ),
+  Fulgur.Document.section(:body,
+    html: body_html,
+    margin: Fulgur.Margin.uniform_mm(22),
+    numbered: true
+  ),
+  Fulgur.Document.section(:backcover,
+    html: backcover_html,
+    margin: Fulgur.Margin.uniform_mm(0),
+    numbered: false
+  )
+]
+
+pdf =
+  Fulgur.Document.render!(sections,
+    page_size: :a4,
+    assets: assets,
+    page_numbers: [
+      format: "Pagina {page} van {total}",
+      position: :bottom_center,
+      bottom_mm: 10,
+      font_size: 9
+    ]
+  )
+```
+
 ## Phoenix
 
 ```elixir
@@ -84,7 +121,8 @@ end
 - `Fulgur.Engine.new/1`, `new!/1`
 - `Fulgur.Engine.render_html/2`, `render_html!/2`
 - `Fulgur.Engine.render_html_to_file/3`
+- `Fulgur.Document.section/2`, `render/2`, `render!/2`
 - `Fulgur.AssetBundle`
 - `Fulgur.PageSize`
 - `Fulgur.Margin`
-- `Fulgur.Pdf.to_binary/1`, `to_base64/1`, `to_data_uri/1`, `write_to_path/2`
+- `Fulgur.Pdf.to_binary/1`, `to_base64/1`, `to_data_uri/1`, `page_count/1`, `write_to_path/2`

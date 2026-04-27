@@ -1,6 +1,9 @@
 use rustler::{Binary, Encoder, Env, ResourceArc, Term};
 use std::sync::Mutex;
 
+#[macro_use]
+extern crate lopdf;
+
 mod atoms {
     rustler::atoms! {
         a3,
@@ -10,10 +13,18 @@ mod atoms {
         assets,
         author,
         bookmarks,
+        bottom_center,
+        bottom_left,
+        bottom_right,
+        bottom_mm,
+        color,
         custom,
+        document,
         edges_mm,
         edges_pt,
         error,
+        font_size,
+        format,
         io,
         lang,
         landscape,
@@ -23,6 +34,7 @@ mod atoms {
         native,
         ok,
         page_size,
+        position,
         pt,
         render,
         title
@@ -140,6 +152,363 @@ fn map_fulgur_error<'a>(env: Env<'a>, err: fulgur::Error) -> Term<'a> {
         }
         other => error(env, atoms::render(), other.to_string()),
     }
+}
+
+#[derive(Clone, Copy)]
+enum PageNumberPosition {
+    BottomLeft,
+    BottomCenter,
+    BottomRight,
+}
+
+struct PageNumberOptions {
+    format: String,
+    position: PageNumberPosition,
+    bottom_pt: f32,
+    font_size: f32,
+    color: (f32, f32, f32),
+}
+
+fn decode_page_number_options(
+    opts: Vec<(rustler::Atom, Term<'_>)>,
+) -> Result<Option<PageNumberOptions>, String> {
+    if opts.is_empty() {
+        return Ok(None);
+    }
+
+    let mut format = "Page {page} of {total}".to_string();
+    let mut position = PageNumberPosition::BottomCenter;
+    let mut bottom_pt = 10.0_f32 * 72.0 / 25.4;
+    let mut font_size = 9.0_f32;
+    let mut color = (80.0_f32 / 255.0, 80.0_f32 / 255.0, 80.0_f32 / 255.0);
+
+    for (key, value) in opts {
+        if key == atoms::format() {
+            format = value
+                .decode::<String>()
+                .map_err(|_| "page number format must be a string".to_string())?;
+        } else if key == atoms::position() {
+            let atom = value
+                .decode::<rustler::Atom>()
+                .map_err(|_| "page number position must be an atom".to_string())?;
+            position = if atom == atoms::bottom_left() {
+                PageNumberPosition::BottomLeft
+            } else if atom == atoms::bottom_center() {
+                PageNumberPosition::BottomCenter
+            } else if atom == atoms::bottom_right() {
+                PageNumberPosition::BottomRight
+            } else {
+                return Err(
+                    "page number position must be :bottom_left, :bottom_center, or :bottom_right"
+                        .to_string(),
+                );
+            };
+        } else if key == atoms::bottom_mm() {
+            bottom_pt = decode_number(value, "page number bottom_mm")? * 72.0 / 25.4;
+        } else if key == atoms::font_size() {
+            font_size = decode_number(value, "page number font_size")?;
+        } else if key == atoms::color() {
+            let (r, g, b): (i64, i64, i64) = value
+                .decode()
+                .map_err(|_| "page number color must be {r, g, b}".to_string())?;
+            if !(0..=255).contains(&r) || !(0..=255).contains(&g) || !(0..=255).contains(&b) {
+                return Err("page number color components must be 0..255".to_string());
+            }
+            color = (r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0);
+        } else {
+            return Err("unknown page number option".to_string());
+        }
+    }
+
+    Ok(Some(PageNumberOptions {
+        format,
+        position,
+        bottom_pt,
+        font_size,
+        color,
+    }))
+}
+
+fn count_pdf_pages(bytes: &[u8]) -> Result<usize, String> {
+    let doc = lopdf::Document::load_mem(bytes).map_err(|e| e.to_string())?;
+    Ok(doc.get_pages().len())
+}
+
+fn compose_pdf_sections(
+    sections: Vec<(Vec<u8>, bool)>,
+    page_number_options: Option<PageNumberOptions>,
+) -> Result<Vec<u8>, String> {
+    if sections.is_empty() {
+        return Err("document must contain at least one section".to_string());
+    }
+
+    let mut max_id = 1;
+    let mut documents_pages: Vec<(lopdf::ObjectId, lopdf::Object)> = Vec::new();
+    let mut documents_objects = std::collections::BTreeMap::new();
+    let mut numbered_pages = Vec::new();
+    let mut document = lopdf::Document::with_version("1.5");
+
+    for (bytes, numbered) in sections {
+        let mut doc = lopdf::Document::load_mem(&bytes).map_err(|e| e.to_string())?;
+        doc.renumber_objects_with(max_id);
+        max_id = doc.max_id + 1;
+
+        let pages = doc.get_pages();
+        for page_id in pages.into_values() {
+            let page = doc
+                .get_object(page_id)
+                .map_err(|e| e.to_string())?
+                .to_owned();
+            documents_pages.push((page_id, page));
+            numbered_pages.push(numbered);
+        }
+
+        documents_objects.extend(doc.objects);
+    }
+
+    let mut catalog_object: Option<(lopdf::ObjectId, lopdf::Object)> = None;
+    let mut pages_object: Option<(lopdf::ObjectId, lopdf::Object)> = None;
+
+    for (object_id, object) in documents_objects.into_iter() {
+        match object.type_name().unwrap_or(b"") {
+            b"Catalog" => {
+                catalog_object = Some((
+                    catalog_object.map(|(id, _)| id).unwrap_or(object_id),
+                    object,
+                ));
+            }
+            b"Pages" => {
+                if let Ok(dictionary) = object.as_dict() {
+                    let mut dictionary = dictionary.clone();
+                    if let Some((_, ref existing)) = pages_object {
+                        if let Ok(existing_dictionary) = existing.as_dict() {
+                            dictionary.extend(existing_dictionary);
+                        }
+                    }
+                    pages_object = Some((
+                        pages_object.map(|(id, _)| id).unwrap_or(object_id),
+                        lopdf::Object::Dictionary(dictionary),
+                    ));
+                }
+            }
+            b"Page" | b"Outlines" | b"Outline" => {}
+            _ => {
+                document.objects.insert(object_id, object);
+            }
+        }
+    }
+
+    let (pages_id, pages_object) =
+        pages_object.ok_or_else(|| "merged document has no Pages root".to_string())?;
+    let (catalog_id, catalog_object) =
+        catalog_object.ok_or_else(|| "merged document has no Catalog root".to_string())?;
+
+    for (object_id, object) in &documents_pages {
+        let dictionary = object.as_dict().map_err(|e| e.to_string())?;
+        let mut dictionary = dictionary.clone();
+        dictionary.set("Parent", pages_id);
+        document
+            .objects
+            .insert(*object_id, lopdf::Object::Dictionary(dictionary));
+    }
+
+    let mut pages_dictionary = pages_object.as_dict().map_err(|e| e.to_string())?.clone();
+    pages_dictionary.set("Count", documents_pages.len() as u32);
+    pages_dictionary.set(
+        "Kids",
+        documents_pages
+            .iter()
+            .map(|(object_id, _)| lopdf::Object::Reference(*object_id))
+            .collect::<Vec<_>>(),
+    );
+    document
+        .objects
+        .insert(pages_id, lopdf::Object::Dictionary(pages_dictionary));
+
+    let mut catalog_dictionary = catalog_object.as_dict().map_err(|e| e.to_string())?.clone();
+    catalog_dictionary.set("Pages", pages_id);
+    catalog_dictionary.remove(b"Outlines");
+    catalog_dictionary.remove(b"PageMode");
+    document
+        .objects
+        .insert(catalog_id, lopdf::Object::Dictionary(catalog_dictionary));
+
+    document.trailer.set("Root", catalog_id);
+    document.max_id = max_id;
+    document.renumber_objects();
+    document.adjust_zero_pages();
+
+    if let Some(options) = page_number_options {
+        stamp_page_numbers(&mut document, &numbered_pages, &options)?;
+    }
+
+    let mut output = Vec::new();
+    document.save_to(&mut output).map_err(|e| e.to_string())?;
+    Ok(output)
+}
+
+fn stamp_page_numbers(
+    document: &mut lopdf::Document,
+    numbered_pages: &[bool],
+    options: &PageNumberOptions,
+) -> Result<(), String> {
+    use lopdf::content::{Content, Operation};
+    use lopdf::{Dictionary, Object, Stream};
+
+    let pages = document.get_pages();
+    let total = numbered_pages.iter().filter(|&&numbered| numbered).count();
+    if total == 0 {
+        return Ok(());
+    }
+
+    let font_id = document.add_object(dictionary! {
+        "Type" => "Font",
+        "Subtype" => "Type1",
+        "BaseFont" => "Helvetica",
+    });
+
+    let mut visible_page = 0usize;
+    for ((idx, (_page_number, page_id)), numbered) in pages.iter().enumerate().zip(numbered_pages) {
+        if !numbered {
+            continue;
+        }
+
+        visible_page += 1;
+        let label = options
+            .format
+            .replace("{page}", &visible_page.to_string())
+            .replace("{total}", &total.to_string());
+
+        let (width, _height) = page_media_box(document, *page_id)?;
+        let text_width = approximate_helvetica_width(&label, options.font_size);
+        let side_margin = options.bottom_pt;
+        let x = match options.position {
+            PageNumberPosition::BottomLeft => side_margin,
+            PageNumberPosition::BottomCenter => ((width - text_width) / 2.0).max(0.0),
+            PageNumberPosition::BottomRight => (width - side_margin - text_width).max(0.0),
+        };
+        let y = options.bottom_pt;
+
+        ensure_page_number_font(document, *page_id, font_id)?;
+
+        let content = Content {
+            operations: vec![
+                Operation::new("q", vec![]),
+                Operation::new("BT", vec![]),
+                Operation::new(
+                    "rg",
+                    vec![
+                        Object::Real(options.color.0),
+                        Object::Real(options.color.1),
+                        Object::Real(options.color.2),
+                    ],
+                ),
+                Operation::new(
+                    "Tf",
+                    vec![
+                        Object::Name(b"FulgurPageNumber".to_vec()),
+                        Object::Real(options.font_size),
+                    ],
+                ),
+                Operation::new("Td", vec![Object::Real(x), Object::Real(y)]),
+                Operation::new("Tj", vec![Object::string_literal(label)]),
+                Operation::new("ET", vec![]),
+                Operation::new("Q", vec![]),
+            ],
+        };
+        let content_id = document.add_object(Stream::new(
+            Dictionary::new(),
+            content.encode().map_err(|e| e.to_string())?,
+        ));
+
+        let page = document
+            .get_object_mut(*page_id)
+            .map_err(|e| e.to_string())?
+            .as_dict_mut()
+            .map_err(|e| e.to_string())?;
+        let mut contents = match page.get(b"Contents") {
+            Ok(Object::Array(items)) => items.clone(),
+            Ok(existing) => vec![existing.clone()],
+            Err(_) => Vec::new(),
+        };
+        contents.push(Object::Reference(content_id));
+        page.set("Contents", Object::Array(contents));
+
+        let _ = idx;
+    }
+
+    Ok(())
+}
+
+fn ensure_page_number_font(
+    document: &mut lopdf::Document,
+    page_id: lopdf::ObjectId,
+    font_id: lopdf::ObjectId,
+) -> Result<(), String> {
+    use lopdf::{Dictionary, Object};
+
+    let page = document
+        .get_object_mut(page_id)
+        .map_err(|e| e.to_string())?
+        .as_dict_mut()
+        .map_err(|e| e.to_string())?;
+
+    if page.get(b"Resources").is_err() {
+        page.set("Resources", Object::Dictionary(Dictionary::new()));
+    }
+    let resources = page
+        .get_mut(b"Resources")
+        .map_err(|e| e.to_string())?
+        .as_dict_mut()
+        .map_err(|e| e.to_string())?;
+
+    if resources.get(b"Font").is_err() {
+        resources.set("Font", Object::Dictionary(Dictionary::new()));
+    }
+    let fonts = resources
+        .get_mut(b"Font")
+        .map_err(|e| e.to_string())?
+        .as_dict_mut()
+        .map_err(|e| e.to_string())?;
+    fonts.set("FulgurPageNumber", Object::Reference(font_id));
+    Ok(())
+}
+
+fn page_media_box(
+    document: &lopdf::Document,
+    page_id: lopdf::ObjectId,
+) -> Result<(f32, f32), String> {
+    let page = document
+        .get_object(page_id)
+        .map_err(|e| e.to_string())?
+        .as_dict()
+        .map_err(|e| e.to_string())?;
+    let media_box = page
+        .get(b"MediaBox")
+        .map_err(|_| "page is missing MediaBox".to_string())?
+        .as_array()
+        .map_err(|_| "page MediaBox must be an array".to_string())?;
+    if media_box.len() != 4 {
+        return Err("page MediaBox must have four values".to_string());
+    }
+
+    let x0 = object_to_f32(&media_box[0])?;
+    let y0 = object_to_f32(&media_box[1])?;
+    let x1 = object_to_f32(&media_box[2])?;
+    let y1 = object_to_f32(&media_box[3])?;
+    Ok(((x1 - x0).abs(), (y1 - y0).abs()))
+}
+
+fn object_to_f32(object: &lopdf::Object) -> Result<f32, String> {
+    match object {
+        lopdf::Object::Integer(n) => Ok(*n as f32),
+        lopdf::Object::Real(n) => Ok(*n),
+        _ => Err("expected numeric PDF object".to_string()),
+    }
+}
+
+fn approximate_helvetica_width(text: &str, font_size: f32) -> f32 {
+    text.chars().count() as f32 * font_size * 0.5
 }
 
 #[rustler::nif]
@@ -347,6 +716,36 @@ fn pdf_to_binary<'a>(env: Env<'a>, pdf: ResourceArc<PdfResource>) -> Binary<'a> 
 fn pdf_to_base64(pdf: ResourceArc<PdfResource>) -> String {
     use base64::Engine as _;
     base64::engine::general_purpose::STANDARD.encode(&pdf.bytes)
+}
+
+#[rustler::nif]
+fn pdf_page_count<'a>(env: Env<'a>, pdf: ResourceArc<PdfResource>) -> Term<'a> {
+    match count_pdf_pages(&pdf.bytes) {
+        Ok(count) => ok(env, count),
+        Err(message) => error(env, atoms::document(), message),
+    }
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn document_compose<'a>(
+    env: Env<'a>,
+    sections: Vec<(ResourceArc<PdfResource>, bool)>,
+    page_number_opts: Vec<(rustler::Atom, Term<'a>)>,
+) -> Term<'a> {
+    let page_number_options = match decode_page_number_options(page_number_opts) {
+        Ok(options) => options,
+        Err(message) => return error(env, atoms::argument(), message),
+    };
+
+    let section_bytes = sections
+        .into_iter()
+        .map(|(pdf, numbered)| (pdf.bytes.clone(), numbered))
+        .collect();
+
+    match compose_pdf_sections(section_bytes, page_number_options) {
+        Ok(bytes) => ok(env, ResourceArc::new(PdfResource { bytes })),
+        Err(message) => error(env, atoms::document(), message),
+    }
 }
 
 fn load(env: Env, _info: Term) -> bool {
