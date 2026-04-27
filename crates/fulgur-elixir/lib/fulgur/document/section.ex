@@ -10,6 +10,8 @@ defmodule Fulgur.Document.Section do
     :page_size,
     :landscape,
     :assets,
+    :background_image,
+    :background_image_file,
     numbered: true
   ]
 
@@ -20,6 +22,8 @@ defmodule Fulgur.Document.Section do
           page_size: Fulgur.PageSize.t() | nil,
           landscape: boolean() | nil,
           assets: Fulgur.AssetBundle.t() | nil,
+          background_image: binary() | nil,
+          background_image_file: String.t() | nil,
           numbered: boolean()
         }
 end

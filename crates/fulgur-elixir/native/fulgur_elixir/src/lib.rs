@@ -235,7 +235,7 @@ fn count_pdf_pages(bytes: &[u8]) -> Result<usize, String> {
 }
 
 fn compose_pdf_sections(
-    sections: Vec<(Vec<u8>, bool, f32)>,
+    sections: Vec<(Vec<u8>, bool, f32, Option<Vec<u8>>)>,
     page_number_options: Option<PageNumberOptions>,
 ) -> Result<Vec<u8>, String> {
     if sections.is_empty() {
@@ -247,9 +247,10 @@ fn compose_pdf_sections(
     let mut documents_objects = std::collections::BTreeMap::new();
     let mut numbered_pages = Vec::new();
     let mut page_bottom_margins = Vec::new();
+    let mut page_backgrounds = Vec::new();
     let mut document = lopdf::Document::with_version("1.5");
 
-    for (bytes, numbered, bottom_margin_pt) in sections {
+    for (bytes, numbered, bottom_margin_pt, background_image) in sections {
         let mut doc = lopdf::Document::load_mem(&bytes).map_err(|e| e.to_string())?;
         doc.renumber_objects_with(max_id);
         max_id = doc.max_id + 1;
@@ -263,6 +264,7 @@ fn compose_pdf_sections(
             documents_pages.push((page_id, page));
             numbered_pages.push(numbered);
             page_bottom_margins.push(bottom_margin_pt.max(0.0));
+            page_backgrounds.push(background_image.clone());
         }
 
         documents_objects.extend(doc.objects);
@@ -340,6 +342,8 @@ fn compose_pdf_sections(
     document.renumber_objects();
     document.adjust_zero_pages();
 
+    stamp_page_backgrounds(&mut document, &page_backgrounds)?;
+
     if let Some(options) = page_number_options {
         stamp_page_numbers(
             &mut document,
@@ -352,6 +356,91 @@ fn compose_pdf_sections(
     let mut output = Vec::new();
     document.save_to(&mut output).map_err(|e| e.to_string())?;
     Ok(output)
+}
+
+fn stamp_page_backgrounds(
+    document: &mut lopdf::Document,
+    page_backgrounds: &[Option<Vec<u8>>],
+) -> Result<(), String> {
+    use lopdf::content::{Content, Operation};
+    use lopdf::{Dictionary, Object, Stream};
+
+    let pages = document.get_pages();
+
+    for ((_page_number, page_id), background) in pages.iter().zip(page_backgrounds) {
+        let Some(background) = background else {
+            continue;
+        };
+
+        let image = image_xobject_from_bytes(background)?;
+        let image_width = object_to_f32(
+            image
+                .dict
+                .get(b"Width")
+                .map_err(|_| "background image is missing Width".to_string())?,
+        )?;
+        let image_height = object_to_f32(
+            image
+                .dict
+                .get(b"Height")
+                .map_err(|_| "background image is missing Height".to_string())?,
+        )?;
+        let (page_width, page_height) = page_media_box(document, *page_id)?;
+
+        if image_width <= 0.0 || image_height <= 0.0 || page_width <= 0.0 || page_height <= 0.0 {
+            return Err("background image and page dimensions must be positive".to_string());
+        }
+
+        let scale = (page_width / image_width).max(page_height / image_height);
+        let draw_width = image_width * scale;
+        let draw_height = image_height * scale;
+        let x = (page_width - draw_width) / 2.0;
+        let y = (page_height - draw_height) / 2.0;
+
+        let image_id = document.add_object(image);
+        let image_name = format!("FulgurBackground{}", image_id.0);
+        document
+            .add_xobject(*page_id, image_name.as_bytes(), image_id)
+            .map_err(|e| e.to_string())?;
+
+        let content = Content {
+            operations: vec![
+                Operation::new("q", vec![]),
+                Operation::new(
+                    "cm",
+                    vec![
+                        Object::Real(draw_width),
+                        Object::Real(0.0),
+                        Object::Real(0.0),
+                        Object::Real(draw_height),
+                        Object::Real(x),
+                        Object::Real(y),
+                    ],
+                ),
+                Operation::new("Do", vec![Object::Name(image_name.into_bytes())]),
+                Operation::new("Q", vec![]),
+            ],
+        };
+        let content_id = document.add_object(Stream::new(
+            Dictionary::new(),
+            content.encode().map_err(|e| e.to_string())?,
+        ));
+
+        let page = document
+            .get_object_mut(*page_id)
+            .map_err(|e| e.to_string())?
+            .as_dict_mut()
+            .map_err(|e| e.to_string())?;
+        let mut contents = match page.get(b"Contents") {
+            Ok(Object::Array(items)) => items.clone(),
+            Ok(existing) => vec![existing.clone()],
+            Err(_) => Vec::new(),
+        };
+        contents.insert(0, Object::Reference(content_id));
+        page.set("Contents", Object::Array(contents));
+    }
+
+    Ok(())
 }
 
 fn stamp_page_numbers(
@@ -451,6 +540,25 @@ fn stamp_page_numbers(
     }
 
     Ok(())
+}
+
+fn image_xobject_from_bytes(bytes: &[u8]) -> Result<lopdf::Stream, String> {
+    let image = image::load_from_memory(bytes).map_err(|e| e.to_string())?;
+    let rgb = image.into_rgb8();
+    let width = rgb.width();
+    let height = rgb.height();
+
+    let mut dict = lopdf::Dictionary::new();
+    dict.set("Type", lopdf::Object::Name(b"XObject".to_vec()));
+    dict.set("Subtype", lopdf::Object::Name(b"Image".to_vec()));
+    dict.set("Width", width);
+    dict.set("Height", height);
+    dict.set("ColorSpace", lopdf::Object::Name(b"DeviceRGB".to_vec()));
+    dict.set("BitsPerComponent", 8);
+
+    let mut stream = lopdf::Stream::new(dict, rgb.into_raw());
+    let _ = stream.compress();
+    Ok(stream)
 }
 
 fn ensure_page_number_font(
@@ -742,7 +850,7 @@ fn pdf_page_count<'a>(env: Env<'a>, pdf: ResourceArc<PdfResource>) -> Term<'a> {
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_compose<'a>(
     env: Env<'a>,
-    sections: Vec<(ResourceArc<PdfResource>, bool, f32)>,
+    sections: Vec<(ResourceArc<PdfResource>, bool, f32, Option<Binary<'a>>)>,
     page_number_opts: Vec<(rustler::Atom, Term<'a>)>,
 ) -> Term<'a> {
     let page_number_options = match decode_page_number_options(page_number_opts) {
@@ -752,7 +860,14 @@ fn document_compose<'a>(
 
     let section_bytes = sections
         .into_iter()
-        .map(|(pdf, numbered, bottom_margin_pt)| (pdf.bytes.clone(), numbered, bottom_margin_pt))
+        .map(|(pdf, numbered, bottom_margin_pt, background)| {
+            (
+                pdf.bytes.clone(),
+                numbered,
+                bottom_margin_pt,
+                background.map(|bytes| bytes.as_slice().to_vec()),
+            )
+        })
         .collect();
 
     match compose_pdf_sections(section_bytes, page_number_options) {

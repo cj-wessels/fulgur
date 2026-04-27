@@ -6,7 +6,7 @@ defmodule Fulgur.Document do
   alias Fulgur.{Document.PageNumbers, Document.Section, Engine, Error, Margin, Pdf}
 
   @engine_keys ~w(page_size margin landscape title author lang bookmarks assets)a
-  @section_keys ~w(html margin page_size landscape assets numbered)a
+  @section_keys ~w(html margin page_size landscape assets numbered background_image background_image_file)a
   @pt_per_mm 72.0 / 25.4
 
   @type section_name :: atom()
@@ -49,6 +49,8 @@ defmodule Fulgur.Document do
       page_size: Keyword.get(opts, :page_size),
       landscape: Keyword.get(opts, :landscape),
       assets: Keyword.get(opts, :assets),
+      background_image: Keyword.get(opts, :background_image),
+      background_image_file: Keyword.get(opts, :background_image_file),
       numbered: Keyword.get(opts, :numbered, true)
     }
   end
@@ -84,6 +86,16 @@ defmodule Fulgur.Document do
     error(:argument, "section numbered must be a boolean")
   end
 
+  defp validate_section(%Section{background_image: image})
+       when not (is_nil(image) or is_binary(image)) do
+    error(:argument, "section background_image must be binary image bytes")
+  end
+
+  defp validate_section(%Section{background_image_file: path})
+       when not (is_nil(path) or is_binary(path)) do
+    error(:argument, "section background_image_file must be a path string")
+  end
+
   defp validate_section(%Section{margin: nil}), do: :ok
   defp validate_section(%Section{margin: %Margin{}}), do: :ok
   defp validate_section(_), do: error(:argument, "section margin must be a Fulgur.Margin")
@@ -95,9 +107,10 @@ defmodule Fulgur.Document do
       engine_opts = section_engine_opts(section, base_opts)
 
       with {:ok, engine} <- Engine.new(engine_opts),
-           {:ok, pdf} <- Engine.render_html(engine, section.html) do
+           {:ok, pdf} <- Engine.render_html(engine, section.html),
+           {:ok, background_image} <- section_background_image(section) do
         bottom_margin_pt = section_bottom_margin_pt(section, base_opts)
-        {:cont, {:ok, [{pdf.ref, section.numbered, bottom_margin_pt} | acc]}}
+        {:cont, {:ok, [{pdf.ref, section.numbered, bottom_margin_pt, background_image} | acc]}}
       else
         {:error, error} -> {:halt, {:error, error}}
       end
@@ -118,6 +131,22 @@ defmodule Fulgur.Document do
 
   defp maybe_put(opts, _key, nil), do: opts
   defp maybe_put(opts, key, value), do: Keyword.put(opts, key, value)
+
+  defp section_background_image(%Section{background_image: image}) when is_binary(image) do
+    {:ok, image}
+  end
+
+  defp section_background_image(%Section{background_image_file: path}) when is_binary(path) do
+    case File.read(path) do
+      {:ok, bytes} ->
+        {:ok, bytes}
+
+      {:error, reason} ->
+        error(:io, "failed to read section background image #{inspect(path)}: #{reason}")
+    end
+  end
+
+  defp section_background_image(_section), do: {:ok, nil}
 
   defp section_bottom_margin_pt(%Section{margin: %Margin{} = margin}, _base_opts) do
     margin_bottom_pt(margin)

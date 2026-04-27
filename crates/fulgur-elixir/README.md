@@ -81,6 +81,7 @@ sections = [
   Fulgur.Document.section(:body,
     html: body_html,
     margin: Fulgur.Margin.uniform_mm(22),
+    background_image_file: "/path/to/background.png",
     numbered: true
   ),
   Fulgur.Document.section(:backcover,

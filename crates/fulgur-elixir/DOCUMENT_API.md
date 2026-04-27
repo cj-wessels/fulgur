@@ -99,6 +99,10 @@ Optional:
 - `:page_size` - overrides document-level page size for this section.
 - `:landscape` - overrides document-level orientation for this section.
 - `:assets` - overrides document-level assets for this section.
+- `:background_image` - binary image bytes to draw as a full-page background
+  behind every page in this section.
+- `:background_image_file` - path to an image file to draw as a full-page
+  background behind every page in this section.
 - `:numbered` - whether pages from this section receive stamped page numbers.
   Defaults to `true`.
 
@@ -177,8 +181,39 @@ PDF page 8: backcover  no number
 
 ## Full-page Covers and Backgrounds
 
-For full-page visual sections, render that section with `margin: 0` and make the
-HTML fill the page.
+Prefer the explicit section background options for full-page backgrounds. The
+background is added in PDF post-processing behind every page produced by that
+section and is scaled like `background-size: cover`.
+
+```elixir
+Fulgur.Document.section(:cover,
+  html: cover_html,
+  margin: Fulgur.Margin.uniform_mm(0),
+  background_image_file: "/path/to/cover.png",
+  numbered: false
+)
+
+Fulgur.Document.section(:body,
+  html: body_html,
+  margin: Fulgur.Margin.uniform_mm(22),
+  background_image_file: "/path/to/body-background.png",
+  numbered: true
+)
+```
+
+Use `background_image` when the application already has the image bytes:
+
+```elixir
+Fulgur.Document.section(:offer,
+  html: offer_html,
+  margin: Fulgur.Margin.new_mm(40, 30, 25, 30),
+  background_image: File.read!("/path/to/offer-background.jpg")
+)
+```
+
+The HTML no longer needs to create a fake full-page background. For full-page
+cover content, still render the section with `margin: 0` and make the HTML fill
+the page.
 
 ```html
 <style>
@@ -202,12 +237,12 @@ body {
 <section class="cover"></section>
 ```
 
-Use `assets` to provide referenced images:
+Use `assets` only for images referenced by the section HTML or CSS:
 
 ```elixir
 assets =
   Fulgur.AssetBundle.new()
-  |> Fulgur.AssetBundle.add_image_file!("cover.jpg", "/path/to/cover.jpg")
+  |> Fulgur.AssetBundle.add_image_file!("logo.jpg", "/path/to/logo.jpg")
 ```
 
 ## Dynamic Body Content
@@ -338,7 +373,7 @@ assert Fulgur.Pdf.to_binary(pdf) =~ "Pagina 1 van"
 - Page-number text uses a simple Helvetica stamp in PDF post-processing.
 - Page-number centering uses approximate text width.
 - Section boundaries are always hard page boundaries.
-- Per-page backgrounds are best handled inside each section's HTML/CSS for now.
+- Full-page section backgrounds support image files/bytes and cover scaling.
 
 ## Future Migration Path
 

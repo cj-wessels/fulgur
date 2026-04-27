@@ -1214,6 +1214,7 @@ version = "0.0.1"
 dependencies = [
  "base64",
  "fulgur",
+ "image",
  "lopdf",
  "rustler",
 ]
@@ -1763,6 +1764,8 @@ dependencies = [
  "byteorder-lite",
  "num-traits",
  "png",
+ "zune-core 0.4.12",
+ "zune-jpeg 0.4.21",
 ]
 
 [[package]]

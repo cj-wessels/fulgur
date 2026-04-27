@@ -50,6 +50,24 @@ defmodule Fulgur.DocumentTest do
     refute Fulgur.Pdf.to_binary(pdf) =~ "Page 1"
   end
 
+  test "can stamp a full-page section background behind content" do
+    sections = [
+      Fulgur.Document.section(:body,
+        html: page_html("Body"),
+        margin: Fulgur.Margin.uniform_mm(20),
+        background_image: tiny_png(),
+        numbered: false
+      )
+    ]
+
+    pdf = Fulgur.Document.render!(sections, page_size: :a4)
+    binary = Fulgur.Pdf.to_binary(pdf)
+
+    assert {:ok, 1} = Fulgur.Pdf.page_count(pdf)
+    assert binary =~ "/Subtype/Image"
+    assert binary =~ "FulgurBackground"
+  end
+
   test "validates document sections" do
     assert {:error, %Fulgur.Error{type: :argument}} = Fulgur.Document.render([])
     assert {:error, %Fulgur.Error{type: :argument}} = Fulgur.Document.render([:not_a_section])
@@ -71,5 +89,79 @@ defmodule Fulgur.DocumentTest do
     </style>
     <div class="page">#{label}</div>
     """
+  end
+
+  defp tiny_png do
+    <<
+      0x89,
+      0x50,
+      0x4E,
+      0x47,
+      0x0D,
+      0x0A,
+      0x1A,
+      0x0A,
+      0x00,
+      0x00,
+      0x00,
+      0x0D,
+      0x49,
+      0x48,
+      0x44,
+      0x52,
+      0x00,
+      0x00,
+      0x00,
+      0x01,
+      0x00,
+      0x00,
+      0x00,
+      0x01,
+      0x08,
+      0x02,
+      0x00,
+      0x00,
+      0x00,
+      0x90,
+      0x77,
+      0x53,
+      0xDE,
+      0x00,
+      0x00,
+      0x00,
+      0x0C,
+      0x49,
+      0x44,
+      0x41,
+      0x54,
+      0x78,
+      0x9C,
+      0x63,
+      0xF8,
+      0xCF,
+      0xC0,
+      0x00,
+      0x00,
+      0x03,
+      0x01,
+      0x01,
+      0x00,
+      0xC9,
+      0xFE,
+      0x92,
+      0xEF,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x49,
+      0x45,
+      0x4E,
+      0x44,
+      0xAE,
+      0x42,
+      0x60,
+      0x82
+    >>
   end
 end
