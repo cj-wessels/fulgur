@@ -1,0 +1,109 @@
+name: Release Elixir NIFs
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Elixir package version, without leading v"
+        required: true
+  push:
+    tags:
+      - "elixir-v*"
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+  artifact-metadata: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-nif:
+    name: NIF ${{ matrix.nif }} / ${{ matrix.job.target }}
+    runs-on: ${{ matrix.job.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        nif: ["2.15"]
+        job:
+          - { target: aarch64-apple-darwin, os: macos-15, use-cross: false }
+          - { target: x86_64-apple-darwin, os: macos-15-intel, use-cross: false }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-22.04, use-cross: true }
+          - { target: aarch64-unknown-linux-musl, os: ubuntu-22.04, use-cross: true }
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04, use-cross: false }
+          - { target: x86_64-unknown-linux-musl, os: ubuntu-22.04, use-cross: true }
+          - { target: x86_64-pc-windows-gnu, os: windows-2022, use-cross: false }
+          - { target: x86_64-pc-windows-msvc, os: windows-2022, use-cross: false }
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Resolve version
+        shell: bash
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            echo "PROJECT_VERSION=${{ github.event.inputs.version }}" >> "$GITHUB_ENV"
+          else
+            echo "PROJECT_VERSION=${GITHUB_REF_NAME#elixir-v}" >> "$GITHUB_ENV"
+          fi
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.job.target }}
+
+      - name: Build precompiled NIF
+        id: build-crate
+        uses: philss/rustler-precompiled-action@v1.1.5
+        with:
+          project-name: fulgur_elixir
+          project-version: ${{ env.PROJECT_VERSION }}
+          target: ${{ matrix.job.target }}
+          nif-version: ${{ matrix.nif }}
+          use-cross: ${{ matrix.job.use-cross }}
+          project-dir: crates/fulgur-elixir/native/fulgur_elixir
+
+      - uses: actions/attest@v4
+        with:
+          subject-path: ${{ steps.build-crate.outputs.file-path }}
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: ${{ steps.build-crate.outputs.file-name }}
+          path: ${{ steps.build-crate.outputs.file-path }}
+          if-no-files-found: error
+
+      - name: Publish release asset
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.build-crate.outputs.file-path }}
+
+  generate-checksum:
+    name: Generate checksum file
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [build-nif]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "26"
+          elixir-version: "1.16"
+
+      - name: Install dependencies
+        working-directory: crates/fulgur-elixir
+        run: mix deps.get
+
+      - name: Generate checksum file
+        working-directory: crates/fulgur-elixir
+        run: mix rustler_precompiled.download Fulgur.Native --all --print
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: elixir-nif-checksum
+          path: crates/fulgur-elixir/checksum-Elixir.Fulgur.Native.exs
+          if-no-files-found: error

@@ -1,9 +1,27 @@
 defmodule Fulgur.Native do
   @moduledoc false
 
-  use Rustler,
+  version = Mix.Project.config()[:version]
+  checksum_file = Path.expand("checksum-Elixir.Fulgur.Native.exs", File.cwd!())
+
+  use RustlerPrecompiled,
     otp_app: :fulgur,
-    crate: :fulgur_elixir,
+    crate: "fulgur_elixir",
+    base_url: "https://github.com/fulgur-rs/fulgur/releases/download/elixir-v#{version}",
+    force_build:
+      System.get_env("FULGUR_BUILD") in ["1", "true"] or not File.exists?(checksum_file),
+    version: version,
+    targets: ~w(
+      aarch64-apple-darwin
+      aarch64-unknown-linux-gnu
+      aarch64-unknown-linux-musl
+      x86_64-apple-darwin
+      x86_64-pc-windows-gnu
+      x86_64-pc-windows-msvc
+      x86_64-unknown-linux-gnu
+      x86_64-unknown-linux-musl
+    ),
+    nif_versions: ["2.15"],
     path: "native/fulgur_elixir"
 
   def version, do: :erlang.nif_error(:nif_not_loaded)

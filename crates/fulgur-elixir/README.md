@@ -6,8 +6,10 @@ deterministic HTML/CSS to PDF conversion library written in Rust.
 ## Status
 
 MVP (v0.0.1, unreleased). The core `Engine` / `AssetBundle` / `PageSize` /
-`Margin` / `Pdf` API is available. Precompiled NIFs, Hex publishing, batch
-rendering, sandboxing, and template-engine wiring are planned for later releases.
+`Margin` / `Pdf` API is available. Precompiled NIF support is wired for release
+artifacts; until a release checksum is generated, builds fall back to compiling
+the Rust NIF from source. Hex publishing, batch rendering, sandboxing, and
+template-engine wiring are planned for later releases.
 
 ## Install
 
@@ -17,6 +19,22 @@ From a checkout of the fulgur repository:
 cd crates/fulgur-elixir
 mix deps.get
 mix test
+```
+
+The package uses `rustler_precompiled` when release artifacts and a checksum file
+are available. To force a local source build, set:
+
+```bash
+FULGUR_BUILD=1 mix test
+```
+
+Release maintainers should build NIF archives with the `Release Elixir NIFs`
+workflow, then generate and include the checksum file before publishing to Hex:
+
+```bash
+cd crates/fulgur-elixir
+mix rustler_precompiled.download Fulgur.Native --all --print
+mix hex.build
 ```
 
 Once published to Hex:

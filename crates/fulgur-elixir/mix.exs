@@ -22,7 +22,8 @@ defmodule Fulgur.MixProject do
 
   defp deps do
     [
-      {:rustler, "~> 0.37", runtime: false}
+      {:rustler, "~> 0.37", optional: true, runtime: false},
+      {:rustler_precompiled, "~> 0.9", runtime: false}
     ]
   end
 
@@ -30,7 +31,9 @@ defmodule Fulgur.MixProject do
     [
       licenses: ["MIT", "Apache-2.0"],
       links: %{"GitHub" => "https://github.com/fulgur-rs/fulgur"},
-      files: ~w(lib native mix.exs README.md .formatter.exs)
+      files:
+        ~w(lib native mix.exs README.md .formatter.exs) ++
+          Path.wildcard("checksum-*.exs")
     ]
   end
 end
