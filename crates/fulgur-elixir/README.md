@@ -98,7 +98,8 @@ pdf =
       format: "Pagina {page} van {total}",
       position: :bottom_center,
       bottom_mm: 10,
-      font_size: 9
+      font_size: 9,
+      color: {0, 0, 0}
     ]
   )
 ```

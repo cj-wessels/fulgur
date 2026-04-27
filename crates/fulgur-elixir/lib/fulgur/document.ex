@@ -7,6 +7,7 @@ defmodule Fulgur.Document do
 
   @engine_keys ~w(page_size margin landscape title author lang bookmarks assets)a
   @section_keys ~w(html margin page_size landscape assets numbered)a
+  @pt_per_mm 72.0 / 25.4
 
   @type section_name :: atom()
 
@@ -95,7 +96,8 @@ defmodule Fulgur.Document do
 
       with {:ok, engine} <- Engine.new(engine_opts),
            {:ok, pdf} <- Engine.render_html(engine, section.html) do
-        {:cont, {:ok, [{pdf.ref, section.numbered} | acc]}}
+        bottom_margin_pt = section_bottom_margin_pt(section, base_opts)
+        {:cont, {:ok, [{pdf.ref, section.numbered, bottom_margin_pt} | acc]}}
       else
         {:error, error} -> {:halt, {:error, error}}
       end
@@ -116,6 +118,26 @@ defmodule Fulgur.Document do
 
   defp maybe_put(opts, _key, nil), do: opts
   defp maybe_put(opts, key, value), do: Keyword.put(opts, key, value)
+
+  defp section_bottom_margin_pt(%Section{margin: %Margin{} = margin}, _base_opts) do
+    margin_bottom_pt(margin)
+  end
+
+  defp section_bottom_margin_pt(_section, base_opts) do
+    case Keyword.get(base_opts, :margin) do
+      %Margin{} = margin -> margin_bottom_pt(margin)
+      nil -> margin_bottom_pt(Margin.uniform_mm(20))
+    end
+  end
+
+  defp margin_bottom_pt(%Margin{kind: :pt, values: {pt}}), do: pt
+  defp margin_bottom_pt(%Margin{kind: :mm, values: {mm}}), do: mm * @pt_per_mm
+
+  defp margin_bottom_pt(%Margin{kind: :edges_pt, values: {_top, _right, bottom, _left}}),
+    do: bottom
+
+  defp margin_bottom_pt(%Margin{kind: :edges_mm, values: {_top, _right, bottom, _left}}),
+    do: bottom * @pt_per_mm
 
   defp normalize_page_numbers(false), do: {:ok, []}
   defp normalize_page_numbers(nil), do: {:ok, []}

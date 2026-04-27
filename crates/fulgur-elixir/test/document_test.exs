@@ -33,7 +33,9 @@ defmodule Fulgur.DocumentTest do
 
     assert %Fulgur.Pdf{} = pdf
     assert {:ok, 3} = Fulgur.Pdf.page_count(pdf)
-    assert Fulgur.Pdf.to_binary(pdf) =~ "Page 1 of 1"
+    binary = Fulgur.Pdf.to_binary(pdf)
+    assert binary =~ "Page 1 of 1"
+    assert binary =~ "0 0 0 rg"
   end
 
   test "can compose without page numbers" do

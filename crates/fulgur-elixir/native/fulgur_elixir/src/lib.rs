@@ -180,7 +180,7 @@ fn decode_page_number_options(
     let mut position = PageNumberPosition::BottomCenter;
     let mut bottom_pt = 10.0_f32 * 72.0 / 25.4;
     let mut font_size = 9.0_f32;
-    let mut color = (80.0_f32 / 255.0, 80.0_f32 / 255.0, 80.0_f32 / 255.0);
+    let mut color = (0.0_f32, 0.0_f32, 0.0_f32);
 
     for (key, value) in opts {
         if key == atoms::format() {
@@ -235,7 +235,7 @@ fn count_pdf_pages(bytes: &[u8]) -> Result<usize, String> {
 }
 
 fn compose_pdf_sections(
-    sections: Vec<(Vec<u8>, bool)>,
+    sections: Vec<(Vec<u8>, bool, f32)>,
     page_number_options: Option<PageNumberOptions>,
 ) -> Result<Vec<u8>, String> {
     if sections.is_empty() {
@@ -246,9 +246,10 @@ fn compose_pdf_sections(
     let mut documents_pages: Vec<(lopdf::ObjectId, lopdf::Object)> = Vec::new();
     let mut documents_objects = std::collections::BTreeMap::new();
     let mut numbered_pages = Vec::new();
+    let mut page_bottom_margins = Vec::new();
     let mut document = lopdf::Document::with_version("1.5");
 
-    for (bytes, numbered) in sections {
+    for (bytes, numbered, bottom_margin_pt) in sections {
         let mut doc = lopdf::Document::load_mem(&bytes).map_err(|e| e.to_string())?;
         doc.renumber_objects_with(max_id);
         max_id = doc.max_id + 1;
@@ -261,6 +262,7 @@ fn compose_pdf_sections(
                 .to_owned();
             documents_pages.push((page_id, page));
             numbered_pages.push(numbered);
+            page_bottom_margins.push(bottom_margin_pt.max(0.0));
         }
 
         documents_objects.extend(doc.objects);
@@ -339,7 +341,12 @@ fn compose_pdf_sections(
     document.adjust_zero_pages();
 
     if let Some(options) = page_number_options {
-        stamp_page_numbers(&mut document, &numbered_pages, &options)?;
+        stamp_page_numbers(
+            &mut document,
+            &numbered_pages,
+            &page_bottom_margins,
+            &options,
+        )?;
     }
 
     let mut output = Vec::new();
@@ -350,6 +357,7 @@ fn compose_pdf_sections(
 fn stamp_page_numbers(
     document: &mut lopdf::Document,
     numbered_pages: &[bool],
+    page_bottom_margins: &[f32],
     options: &PageNumberOptions,
 ) -> Result<(), String> {
     use lopdf::content::{Content, Operation};
@@ -368,7 +376,12 @@ fn stamp_page_numbers(
     });
 
     let mut visible_page = 0usize;
-    for ((idx, (_page_number, page_id)), numbered) in pages.iter().enumerate().zip(numbered_pages) {
+    for (((idx, (_page_number, page_id)), numbered), bottom_margin_pt) in pages
+        .iter()
+        .enumerate()
+        .zip(numbered_pages)
+        .zip(page_bottom_margins)
+    {
         if !numbered {
             continue;
         }
@@ -387,7 +400,7 @@ fn stamp_page_numbers(
             PageNumberPosition::BottomCenter => ((width - text_width) / 2.0).max(0.0),
             PageNumberPosition::BottomRight => (width - side_margin - text_width).max(0.0),
         };
-        let y = options.bottom_pt;
+        let y = options.bottom_pt.max(bottom_margin_pt / 2.0);
 
         ensure_page_number_font(document, *page_id, font_id)?;
 
@@ -729,7 +742,7 @@ fn pdf_page_count<'a>(env: Env<'a>, pdf: ResourceArc<PdfResource>) -> Term<'a> {
 #[rustler::nif(schedule = "DirtyCpu")]
 fn document_compose<'a>(
     env: Env<'a>,
-    sections: Vec<(ResourceArc<PdfResource>, bool)>,
+    sections: Vec<(ResourceArc<PdfResource>, bool, f32)>,
     page_number_opts: Vec<(rustler::Atom, Term<'a>)>,
 ) -> Term<'a> {
     let page_number_options = match decode_page_number_options(page_number_opts) {
@@ -739,7 +752,7 @@ fn document_compose<'a>(
 
     let section_bytes = sections
         .into_iter()
-        .map(|(pdf, numbered)| (pdf.bytes.clone(), numbered))
+        .map(|(pdf, numbered, bottom_margin_pt)| (pdf.bytes.clone(), numbered, bottom_margin_pt))
         .collect();
 
     match compose_pdf_sections(section_bytes, page_number_options) {

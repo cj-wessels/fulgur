@@ -7,7 +7,7 @@ defmodule Fulgur.Document.PageNumbers do
             position: :bottom_center,
             bottom_mm: 10,
             font_size: 9,
-            color: {80, 80, 80}
+            color: {0, 0, 0}
 
   @type position :: :bottom_left | :bottom_center | :bottom_right
 

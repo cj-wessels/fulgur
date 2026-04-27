@@ -67,7 +67,7 @@ pdf =
       position: :bottom_center,
       bottom_mm: 10,
       font_size: 9,
-      color: {80, 80, 80}
+      color: {0, 0, 0}
     ]
   )
 
@@ -105,6 +105,12 @@ Optional:
 Document-level options passed to `Fulgur.Document.render/2` are used as defaults
 for every section unless the section overrides them.
 
+The effective bottom margin is also passed to the native PDF composer. Page
+numbers are placed at least `bottom_mm` from the page edge, but when a numbered
+section has a larger bottom margin, the text is placed halfway inside that
+bottom margin. This keeps the number in the margin area instead of overlapping
+the content area.
+
 ## Page Numbering
 
 Page numbers are applied after all section PDFs are merged. This means cover and
@@ -118,7 +124,8 @@ page_numbers: [
   format: "Pagina {page} van {total}",
   position: :bottom_center,
   bottom_mm: 10,
-  font_size: 9
+  font_size: 9,
+  color: {0, 0, 0}
 ]
 ```
 
@@ -132,6 +139,8 @@ Supported positions:
 - `:bottom_left`
 - `:bottom_center`
 - `:bottom_right`
+
+The default color is black, `{0, 0, 0}`.
 
 If all sections have `numbered: false`, no page numbers are stamped.
 
