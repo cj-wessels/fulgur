@@ -10,7 +10,7 @@
 
 **Reference:** `crates/pyfulgur/` and `crates/fulgur-ruby/` are the existing binding MVPs. Mirror their API surface, option mapping, error mapping, and scheduler-release strategy in an Elixir/Rustler shape.
 
-**beads issue:** TBD (create once `bd` is available)
+**beads issue:** `fulgur-e02`
 **worktree:** `/Users/cjw/Experiments/fulgur` or dedicated worktree `/Users/cjw/Experiments/fulgur/.worktrees/elixir-binding-mvp`
 **Branch:** `codex/elixir-binding-mvp`
 
@@ -27,6 +27,19 @@
 ---
 
 ## Context
+
+### Execution Setup
+
+Before editing code:
+
+```bash
+cd /Users/cjw/Experiments/fulgur
+bd show fulgur-e02
+bd update fulgur-e02 --claim
+git switch -c codex/elixir-binding-mvp-impl
+```
+
+If a branch already exists for the implementation, use it instead of creating a new one. Keep the existing plan-only branch separate unless the user explicitly asks to implement on it.
 
 ### fulgur Public API
 
@@ -141,10 +154,34 @@ defmodule Fulgur.MixProject do
     [
       licenses: ["MIT", "Apache-2.0"],
       links: %{"GitHub" => "https://github.com/fulgur-rs/fulgur"},
-      files: ~w(lib native mix.exs README.md LICENSE-MIT LICENSE-APACHE)
+      files: ~w(lib native mix.exs README.md .formatter.exs)
     ]
   end
 end
+```
+
+**Step 2a: formatter and test helper**
+
+`crates/fulgur-elixir/.formatter.exs`:
+
+```elixir
+[
+  inputs: ["{mix,.formatter}.exs", "{config,lib,test}/**/*.{ex,exs}"]
+]
+```
+
+`crates/fulgur-elixir/test/test_helper.exs`:
+
+```elixir
+ExUnit.start()
+```
+
+`crates/fulgur-elixir/README.md` can start as a short placeholder in this task and is replaced with full documentation in Task 6:
+
+```markdown
+# fulgur
+
+Elixir bindings for fulgur.
 ```
 
 **Step 3: `crates/fulgur-elixir/native/fulgur_elixir/Cargo.toml`**
@@ -311,9 +348,18 @@ defmodule Fulgur.Margin do
     %__MODULE__{kind: :edges_pt, values: {vertical, horizontal, vertical, horizontal}}
   end
 
+  def symmetric_mm(vertical, horizontal) when is_number(vertical) and is_number(horizontal) do
+    %__MODULE__{kind: :edges_mm, values: {vertical, horizontal, vertical, horizontal}}
+  end
+
   def new(top, right, bottom, left)
       when is_number(top) and is_number(right) and is_number(bottom) and is_number(left) do
     %__MODULE__{kind: :edges_pt, values: {top, right, bottom, left}}
+  end
+
+  def new_mm(top, right, bottom, left)
+      when is_number(top) and is_number(right) and is_number(bottom) and is_number(left) do
+    %__MODULE__{kind: :edges_mm, values: {top, right, bottom, left}}
   end
 end
 ```
@@ -354,7 +400,7 @@ mix test
 Add to `src/lib.rs`:
 
 ```rust
-use rustler::{Binary, Encoder, Env, Error as NifError, NifResult, ResourceArc, Term};
+use rustler::{Binary, Encoder, Env, ResourceArc, Term};
 use std::sync::Mutex;
 
 struct AssetBundleResource {
@@ -479,6 +525,17 @@ rustler::init!(
     ],
     load = load
 );
+```
+
+Also add native declarations to `crates/fulgur-elixir/lib/fulgur/native.ex` when each NIF is introduced:
+
+```elixir
+def asset_bundle_new, do: :erlang.nif_error(:nif_not_loaded)
+def asset_bundle_add_css(_bundle, _css), do: :erlang.nif_error(:nif_not_loaded)
+def asset_bundle_add_css_file(_bundle, _path), do: :erlang.nif_error(:nif_not_loaded)
+def asset_bundle_add_font_file(_bundle, _path), do: :erlang.nif_error(:nif_not_loaded)
+def asset_bundle_add_image(_bundle, _name, _bytes), do: :erlang.nif_error(:nif_not_loaded)
+def asset_bundle_add_image_file(_bundle, _name, _path), do: :erlang.nif_error(:nif_not_loaded)
 ```
 
 **Step 4: Elixir wrapper**
@@ -649,56 +706,164 @@ end
 **Step 3: Rust `EngineResource`**
 
 ```rust
+mod atoms {
+    rustler::atoms! {
+        a3,
+        a4,
+        argument,
+        assets,
+        author,
+        bookmarks,
+        custom,
+        edges_mm,
+        edges_pt,
+        lang,
+        landscape,
+        letter,
+        margin,
+        mm,
+        ok,
+        page_size,
+        pt,
+        title
+    }
+}
+
 struct EngineResource {
     inner: fulgur::Engine,
 }
 
+fn decode_number(value: Term<'_>, field: &str) -> Result<f32, String> {
+    value
+        .decode::<f64>()
+        .map(|n| n as f32)
+        .or_else(|_| value.decode::<i64>().map(|n| n as f32))
+        .map_err(|_| format!("{field} must be a number"))
+}
+
+fn decode_page_size(value: Term<'_>) -> Result<fulgur::PageSize, String> {
+    if let Ok(atom) = value.decode::<rustler::Atom>() {
+        if atom == atoms::a4() {
+            return Ok(fulgur::PageSize::A4);
+        }
+        if atom == atoms::letter() {
+            return Ok(fulgur::PageSize::LETTER);
+        }
+        if atom == atoms::a3() {
+            return Ok(fulgur::PageSize::A3);
+        }
+    }
+
+    let (tag, width, height): (rustler::Atom, Term<'_>, Term<'_>) = value
+        .decode()
+        .map_err(|_| "page_size must be :a4, :letter, :a3, or {:custom, width_mm, height_mm}".to_string())?;
+    if tag != atoms::custom() {
+        return Err("page_size tuple must be {:custom, width_mm, height_mm}".to_string());
+    }
+
+    Ok(fulgur::PageSize::custom(
+        decode_number(width, "custom page width")?,
+        decode_number(height, "custom page height")?,
+    ))
+}
+
+fn decode_margin(value: Term<'_>) -> Result<fulgur::Margin, String> {
+    let (kind, values): (rustler::Atom, Term<'_>) = value
+        .decode()
+        .map_err(|_| "margin must be {kind, values}".to_string())?;
+
+    if kind == atoms::pt() {
+        let (pt,): (Term<'_>,) = values
+            .decode()
+            .map_err(|_| "pt margin must be {:pt, {pt}}".to_string())?;
+        return Ok(fulgur::Margin::uniform(decode_number(pt, "margin pt")?));
+    }
+
+    if kind == atoms::mm() {
+        let (mm,): (Term<'_>,) = values
+            .decode()
+            .map_err(|_| "mm margin must be {:mm, {mm}}".to_string())?;
+        return Ok(fulgur::Margin::uniform_mm(decode_number(mm, "margin mm")?));
+    }
+
+    if kind == atoms::edges_pt() || kind == atoms::edges_mm() {
+        let (top, right, bottom, left): (Term<'_>, Term<'_>, Term<'_>, Term<'_>) = values
+            .decode()
+            .map_err(|_| "edge margin must be {top, right, bottom, left}".to_string())?;
+        let margin = fulgur::Margin {
+            top: decode_number(top, "margin top")?,
+            right: decode_number(right, "margin right")?,
+            bottom: decode_number(bottom, "margin bottom")?,
+            left: decode_number(left, "margin left")?,
+        };
+        if kind == atoms::edges_mm() {
+            const PT_PER_MM: f32 = 72.0 / 25.4;
+            return Ok(fulgur::Margin {
+                top: margin.top * PT_PER_MM,
+                right: margin.right * PT_PER_MM,
+                bottom: margin.bottom * PT_PER_MM,
+                left: margin.left * PT_PER_MM,
+            });
+        }
+        return Ok(margin);
+    }
+
+    Err("margin kind must be :pt, :mm, :edges_pt, or :edges_mm".to_string())
+}
+
 #[rustler::nif]
-fn engine_new<'a>(env: Env<'a>, opts: Vec<(String, Term<'a>)>) -> Term<'a> {
-    // If atom-key keyword decoding is simpler in implementation, use Vec<(Atom, Term)>
-    // and convert atoms via helper functions. Keep the Elixir wrapper stable.
+fn engine_new<'a>(env: Env<'a>, opts: Vec<(rustler::Atom, Term<'a>)>) -> Term<'a> {
     let mut builder = fulgur::Engine::builder();
 
     for (key, value) in opts {
-        match key.as_str() {
-            "page_size" => {
-                // decode :a4/:letter/:a3/{:custom, w, h}
+        if key == atoms::page_size() {
+            match decode_page_size(value) {
+                Ok(page_size) => builder = builder.page_size(page_size),
+                Err(message) => return error(env, "argument", message),
             }
-            "margin" => {
-                // decode {:mm, {20}} / {:pt, {72}} / {:edges_pt, {t,r,b,l}}
+        } else if key == atoms::margin() {
+            match decode_margin(value) {
+                Ok(margin) => builder = builder.margin(margin),
+                Err(message) => return error(env, "argument", message),
             }
-            "landscape" => {
-                let landscape: bool = value.decode().map_err(|_| NifError::BadArg).unwrap();
-                builder = builder.landscape(landscape);
+        } else if key == atoms::landscape() {
+            match value.decode::<bool>() {
+                Ok(landscape) => builder = builder.landscape(landscape),
+                Err(_) => return error(env, "argument", "landscape must be a boolean"),
             }
-            "title" => {
-                let title: String = value.decode().map_err(|_| NifError::BadArg).unwrap();
-                builder = builder.title(title);
+        } else if key == atoms::title() {
+            match value.decode::<String>() {
+                Ok(title) => builder = builder.title(title),
+                Err(_) => return error(env, "argument", "title must be a string"),
             }
-            "author" => {
-                let author: String = value.decode().map_err(|_| NifError::BadArg).unwrap();
-                builder = builder.author(author);
+        } else if key == atoms::author() {
+            match value.decode::<String>() {
+                Ok(author) => builder = builder.author(author),
+                Err(_) => return error(env, "argument", "author must be a string"),
             }
-            "lang" => {
-                let lang: String = value.decode().map_err(|_| NifError::BadArg).unwrap();
-                builder = builder.lang(lang);
+        } else if key == atoms::lang() {
+            match value.decode::<String>() {
+                Ok(lang) => builder = builder.lang(lang),
+                Err(_) => return error(env, "argument", "lang must be a string"),
             }
-            "bookmarks" => {
-                let bookmarks: bool = value.decode().map_err(|_| NifError::BadArg).unwrap();
-                builder = builder.bookmarks(bookmarks);
+        } else if key == atoms::bookmarks() {
+            match value.decode::<bool>() {
+                Ok(bookmarks) => builder = builder.bookmarks(bookmarks),
+                Err(_) => return error(env, "argument", "bookmarks must be a boolean"),
             }
-            "assets" => {
-                let assets: ResourceArc<AssetBundleResource> =
-                    value.decode().map_err(|_| NifError::BadArg).unwrap();
-                let cloned = assets
-                    .inner
-                    .lock()
-                    .map_err(|_| NifError::BadArg)
-                    .unwrap()
-                    .clone();
-                builder = builder.assets(cloned);
+        } else if key == atoms::assets() {
+            match value.decode::<ResourceArc<AssetBundleResource>>() {
+                Ok(assets) => {
+                    let cloned = match assets.inner.lock() {
+                        Ok(inner) => inner.clone(),
+                        Err(_) => return error(env, "native", "asset bundle lock poisoned"),
+                    };
+                    builder = builder.assets(cloned);
+                }
+                Err(_) => return error(env, "argument", "assets must be a Fulgur.AssetBundle"),
             }
-            _ => return error(env, "argument", format!("unknown option {key}")),
+        } else {
+            return error(env, "argument", "unknown engine option");
         }
     }
 
@@ -706,9 +871,35 @@ fn engine_new<'a>(env: Env<'a>, opts: Vec<(String, Term<'a>)>) -> Term<'a> {
 }
 ```
 
+If Rustler version differences make direct `Atom` equality awkward, keep the same behavior but switch to a small `decode_atom_name(atom) -> &'static str` helper. Do not fall back to accepting arbitrary strings for option keys; the Elixir wrapper should pass atoms from the keyword list.
+
+Add native declarations:
+
+```elixir
+def engine_new(_opts), do: :erlang.nif_error(:nif_not_loaded)
+```
+
+Also add `engine_new` to the `rustler::init!` NIF list.
+
+Update the Rustler load function from Task 3 so it registers both resource types:
+
+```rust
+fn load(env: Env, _info: Term) -> bool {
+    rustler::resource!(AssetBundleResource, env);
+    rustler::resource!(EngineResource, env);
+    true
+}
+```
+
 **Step 4: Implementation notes**
 
-The snippet above is directional. In the implementation, do not use `unwrap()`; create helpers that convert decode errors to `{:error, {"argument", message}}`. `EngineBuilder` is a move-by-value builder, so every branch must assign with `builder = builder.foo(value);`.
+The snippet above is intended to be implemented directly alongside the imports and resource registrations from the surrounding tasks. Keep these constraints while implementing:
+
+- Do not use `unwrap()` in NIF argument decoding.
+- Convert all decode failures to `{:error, {"argument", message}}`.
+- Convert poisoned resource locks to `{:error, {"native", message}}`.
+- `EngineBuilder` is a move-by-value builder, so every successful branch must assign with `builder = builder.foo(value);`.
+- If edge margin values are supplied in millimeters, convert them to points with `72.0 / 25.4`.
 
 **Step 5: tests**
 
@@ -788,7 +979,7 @@ fn engine_render_html_to_file<'a>(
     path: String,
 ) -> Term<'a> {
     match engine.inner.render_html_to_file(&html, path) {
-        Ok(()) => ok(env, "ok"),
+        Ok(()) => ok(env, atoms::ok()),
         Err(e) => map_fulgur_error(env, e),
     }
 }
@@ -804,6 +995,17 @@ fn pdf_to_binary<'a>(env: Env<'a>, pdf: ResourceArc<PdfResource>) -> Binary<'a> 
 fn pdf_to_base64(pdf: ResourceArc<PdfResource>) -> String {
     use base64::Engine as _;
     base64::engine::general_purpose::STANDARD.encode(&pdf.bytes)
+}
+```
+
+Update the Rustler load function so it registers all resource types:
+
+```rust
+fn load(env: Env, _info: Term) -> bool {
+    rustler::resource!(AssetBundleResource, env);
+    rustler::resource!(EngineResource, env);
+    rustler::resource!(PdfResource, env);
+    true
 }
 ```
 
@@ -844,11 +1046,22 @@ end
 def render_html_to_file(%__MODULE__{} = engine, html, path)
     when is_binary(html) and is_binary(path) do
   case Fulgur.Native.engine_render_html_to_file(engine.ref, html, path) do
-    {:ok, "ok"} -> :ok
+    {:ok, :ok} -> :ok
     {:error, {kind, message}} -> {:error, Error.exception(type: String.to_atom(kind), message: message)}
   end
 end
 ```
+
+Add native declarations:
+
+```elixir
+def engine_render_html(_engine, _html), do: :erlang.nif_error(:nif_not_loaded)
+def engine_render_html_to_file(_engine, _html, _path), do: :erlang.nif_error(:nif_not_loaded)
+def pdf_to_binary(_pdf), do: :erlang.nif_error(:nif_not_loaded)
+def pdf_to_base64(_pdf), do: :erlang.nif_error(:nif_not_loaded)
+```
+
+Also add `engine_render_html`, `engine_render_html_to_file`, `pdf_to_binary`, and `pdf_to_base64` to the `rustler::init!` NIF list.
 
 `lib/fulgur/pdf.ex`:
 
@@ -1038,6 +1251,7 @@ Expected: all pass. If `cargo test -p fulgur-elixir` is not meaningful because i
 
 ```bash
 cd crates/fulgur-elixir
+mix deps.get
 mix format --check-formatted
 mix test
 mix compile --warnings-as-errors
@@ -1047,10 +1261,11 @@ mix compile --warnings-as-errors
 
 ```bash
 cd crates/fulgur-elixir
+mix local.hex --force   # only needed if Hex is not already installed locally
 mix hex.build
 ```
 
-Expected: package builds locally. Do not publish in this task.
+Expected: package builds locally. Do not publish in this task. If `mix hex.build` fails because the Hex task is unavailable, install Hex with `mix local.hex --force` and rerun the command.
 
 **Step 4: manual smoke script**
 
@@ -1069,15 +1284,22 @@ Expected: prints a positive byte count and does not crash the VM.
 
 ## Task 8: Follow-up issues
 
-Create beads issues for remaining work:
+Create beads issues for remaining work. Use titles/descriptions like these and let beads assign the actual `fulgur-*` ids:
 
-- `fulgur-elixir-precompiled`: add `rustler_precompiled` artifacts for macOS/Linux/Windows targets
-- `fulgur-elixir-hex-publish`: publish package to Hex.pm with CI release workflow
-- `fulgur-elixir-template-api`: expose MiniJinja template + JSON data rendering
-- `fulgur-elixir-batch-api`: add batch rendering API and concurrency guidance
-- `fulgur-elixir-phoenix-docs`: add richer Phoenix examples and release/container deployment notes
+```bash
+bd create --title="Add precompiled Elixir NIF artifacts" --description="Add rustler_precompiled artifacts for supported macOS, Linux, and Windows targets." --type=task --priority=2
+bd create --title="Publish Elixir package to Hex.pm" --description="Add release workflow and publish the fulgur Elixir package to Hex.pm after the source-build MVP is stable." --type=task --priority=2
+bd create --title="Expose Elixir template rendering API" --description="Expose MiniJinja template and JSON data rendering through the Elixir binding." --type=feature --priority=3
+bd create --title="Add Elixir batch rendering API" --description="Add batch rendering APIs and concurrency guidance for Elixir/Phoenix workloads." --type=feature --priority=3
+bd create --title="Expand Phoenix documentation for Elixir binding" --description="Add richer Phoenix controller examples plus release and container deployment notes." --type=task --priority=3
+```
 
-If `bd` is unavailable in the environment, record these in the final handoff and create them when beads is installed.
+Then close `fulgur-e02` after quality gates pass:
+
+```bash
+bd close fulgur-e02 --reason="Elixir binding MVP implemented and documented."
+bd dolt push
+```
 
 ---
 
