@@ -4,69 +4,63 @@
 
 **Goal:** Build a standalone Elixir-first PDF composition package that renders HTML through Playwright/Puppeteer, composes dynamic multi-section PDFs, supports full-page backgrounds, fixed-height HTML headers/footers, imported PDFs, and rule-based page numbering.
 
-**Architecture:** Create a new package at `crates/pdf-composer` rather than extending `crates/fulgur-elixir`. Elixir owns the document model, validation, render plan, page manifest, and numbering logic. Renderer and backend behaviours isolate Playwright HTML rendering and Rustler-backed PDF operations.
+**Architecture:** Execute this plan from the root of a brand-new project directory, for example `/path/to/pdf_composer`. Elixir owns the document model, validation, render plan, page manifest, and numbering logic. Renderer and backend behaviours isolate Playwright HTML rendering and Rustler-backed PDF operations.
 
-**Tech Stack:** Elixir 1.16, Mix, ExUnit, Rustler/RustlerPrecompiled, Rust 2024, `lopdf` for the first native PDF backend, Node + Playwright/Puppeteer for HTML-to-PDF rendering.
+**Tech Stack:** Elixir 1.16, Mix, ExUnit, Rustler, Rust 2024, `lopdf` for the first native PDF backend, Node + Playwright/Puppeteer for HTML-to-PDF rendering.
 
 ---
 
 ## File Structure
 
-Create a new package:
+Create this structure directly in the new project root:
 
 ```text
-crates/pdf-composer/
-  .formatter.exs
-  README.md
-  mix.exs
-  package.json
-  priv/playwright/render.js
-  lib/pdf_composer.ex
-  lib/pdf_composer/backend.ex
-  lib/pdf_composer/backends/native.ex
-  lib/pdf_composer/document.ex
-  lib/pdf_composer/error.ex
-  lib/pdf_composer/manifest.ex
-  lib/pdf_composer/native.ex
-  lib/pdf_composer/numbering.ex
-  lib/pdf_composer/pdf.ex
-  lib/pdf_composer/region.ex
-  lib/pdf_composer/renderable.ex
-  lib/pdf_composer/renderer.ex
-  lib/pdf_composer/renderers/playwright.ex
-  lib/pdf_composer/section.ex
-  native/pdf_composer/Cargo.toml
-  native/pdf_composer/src/lib.rs
-  test/pdf_composer/document_test.exs
-  test/pdf_composer/numbering_test.exs
-  test/pdf_composer/planner_test.exs
-  test/pdf_composer/playwright_test.exs
-  test/pdf_composer/native_backend_test.exs
-  test/test_helper.exs
+.
+├── .formatter.exs
+├── README.md
+├── mix.exs
+├── package.json
+├── priv/playwright/render.js
+├── lib/pdf_composer.ex
+├── lib/pdf_composer/backend.ex
+├── lib/pdf_composer/backends/native.ex
+├── lib/pdf_composer/document.ex
+├── lib/pdf_composer/error.ex
+├── lib/pdf_composer/manifest.ex
+├── lib/pdf_composer/native.ex
+├── lib/pdf_composer/numbering.ex
+├── lib/pdf_composer/pdf.ex
+├── lib/pdf_composer/region.ex
+├── lib/pdf_composer/renderable.ex
+├── lib/pdf_composer/renderer.ex
+├── lib/pdf_composer/renderers/playwright.ex
+├── lib/pdf_composer/section.ex
+├── native/pdf_composer/Cargo.toml
+├── native/pdf_composer/src/lib.rs
+├── test/pdf_composer/document_test.exs
+├── test/pdf_composer/numbering_test.exs
+├── test/pdf_composer/planner_test.exs
+├── test/pdf_composer/playwright_test.exs
+├── test/pdf_composer/native_backend_test.exs
+└── test/test_helper.exs
 ```
 
-Modify workspace metadata:
-
-```text
-Cargo.toml
-```
-
-Keep the package independent from `fulgur`. Do not call `Fulgur.Engine`, `Fulgur.Document`, or the `fulgur` Rust crate.
+Keep the package independent from Fulgur. Do not call `Fulgur.Engine`, `Fulgur.Document`, or the `fulgur` Rust crate. Do not edit any parent workspace files.
 
 ## Task 1: Scaffold Standalone Mix Package
 
 **Files:**
-- Create: `crates/pdf-composer/mix.exs`
-- Create: `crates/pdf-composer/.formatter.exs`
-- Create: `crates/pdf-composer/test/test_helper.exs`
-- Create: `crates/pdf-composer/lib/pdf_composer.ex`
-- Create: `crates/pdf-composer/lib/pdf_composer/error.ex`
-- Create: `crates/pdf-composer/README.md`
-- Test: `crates/pdf-composer/test/pdf_composer/document_test.exs`
+- Create: `mix.exs`
+- Create: `.formatter.exs`
+- Create: `test/test_helper.exs`
+- Create: `lib/pdf_composer.ex`
+- Create: `lib/pdf_composer/error.ex`
+- Create: `README.md`
+- Test: `test/pdf_composer/document_test.exs`
 
 - [ ] **Step 1: Write the initial package test**
 
-Create `crates/pdf-composer/test/pdf_composer/document_test.exs`:
+Create `test/pdf_composer/document_test.exs`:
 
 ```elixir
 defmodule PdfComposer.DocumentTest do
@@ -88,7 +82,6 @@ end
 Run:
 
 ```bash
-cd crates/pdf-composer
 mix test test/pdf_composer/document_test.exs
 ```
 
@@ -96,7 +89,7 @@ Expected: compilation fails because `PdfComposer` and `PdfComposer.Document` are
 
 - [ ] **Step 3: Create the Mix project**
 
-Create `crates/pdf-composer/mix.exs`:
+Create `mix.exs`:
 
 ```elixir
 defmodule PdfComposer.MixProject do
@@ -110,8 +103,7 @@ defmodule PdfComposer.MixProject do
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       package: package(),
-      description: "Elixir-first dynamic PDF composition with Playwright rendering",
-      source_url: "https://github.com/fulgur-rs/fulgur"
+      description: "Elixir-first dynamic PDF composition with Playwright rendering"
     ]
   end
 
@@ -122,22 +114,20 @@ defmodule PdfComposer.MixProject do
   defp deps do
     [
       {:jason, "~> 1.4"},
-      {:rustler, "~> 0.37", optional: true, runtime: false},
-      {:rustler_precompiled, "~> 0.9", runtime: false}
+      {:rustler, "~> 0.37", runtime: false}
     ]
   end
 
   defp package do
     [
       licenses: ["MIT", "Apache-2.0"],
-      links: %{"GitHub" => "https://github.com/fulgur-rs/fulgur"},
-      files: ~w(lib native priv mix.exs README.md .formatter.exs package.json) ++ Path.wildcard("checksum-*.exs")
+      files: ~w(lib native priv mix.exs README.md .formatter.exs package.json)
     ]
   end
 end
 ```
 
-Create `crates/pdf-composer/.formatter.exs`:
+Create `.formatter.exs`:
 
 ```elixir
 [
@@ -145,13 +135,13 @@ Create `crates/pdf-composer/.formatter.exs`:
 ]
 ```
 
-Create `crates/pdf-composer/test/test_helper.exs`:
+Create `test/test_helper.exs`:
 
 ```elixir
 ExUnit.start()
 ```
 
-Create `crates/pdf-composer/README.md`:
+Create `README.md`:
 
 ```markdown
 # pdf_composer
@@ -162,7 +152,7 @@ and Rustler-backed PDF composition.
 
 - [ ] **Step 4: Create the minimal public API**
 
-Create `crates/pdf-composer/lib/pdf_composer/error.ex`:
+Create `lib/pdf_composer/error.ex`:
 
 ```elixir
 defmodule PdfComposer.Error do
@@ -187,7 +177,7 @@ defmodule PdfComposer.Error do
 end
 ```
 
-Create `crates/pdf-composer/lib/pdf_composer/document.ex`:
+Create `lib/pdf_composer/document.ex`:
 
 ```elixir
 defmodule PdfComposer.Document do
@@ -205,7 +195,7 @@ defmodule PdfComposer.Document do
 end
 ```
 
-Create `crates/pdf-composer/lib/pdf_composer.ex`:
+Create `lib/pdf_composer.ex`:
 
 ```elixir
 defmodule PdfComposer do
@@ -242,7 +232,6 @@ end
 Run:
 
 ```bash
-cd crates/pdf-composer
 mix deps.get
 mix test test/pdf_composer/document_test.exs
 ```
@@ -252,22 +241,22 @@ Expected: 2 tests pass.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/pdf-composer
+git add mix.exs .formatter.exs README.md lib test
 git commit -m "feat(pdf-composer): scaffold elixir package"
 ```
 
 ## Task 2: Add Document Sections and Renderables
 
 **Files:**
-- Create: `crates/pdf-composer/lib/pdf_composer/section.ex`
-- Create: `crates/pdf-composer/lib/pdf_composer/renderable.ex`
-- Create: `crates/pdf-composer/lib/pdf_composer/region.ex`
-- Modify: `crates/pdf-composer/lib/pdf_composer.ex`
-- Test: `crates/pdf-composer/test/pdf_composer/document_test.exs`
+- Create: `lib/pdf_composer/section.ex`
+- Create: `lib/pdf_composer/renderable.ex`
+- Create: `lib/pdf_composer/region.ex`
+- Modify: `lib/pdf_composer.ex`
+- Test: `test/pdf_composer/document_test.exs`
 
 - [ ] **Step 1: Extend document tests for sections and renderables**
 
-Append to `crates/pdf-composer/test/pdf_composer/document_test.exs`:
+Append to `test/pdf_composer/document_test.exs`:
 
 ```elixir
 test "adds a section with HTML content and image background" do
@@ -313,7 +302,6 @@ end
 Run:
 
 ```bash
-cd crates/pdf-composer
 mix test test/pdf_composer/document_test.exs
 ```
 
@@ -321,7 +309,7 @@ Expected: failures for undefined `section/3`, `html/2`, `image/2`, `Section`, `R
 
 - [ ] **Step 3: Add renderable and section structs**
 
-Create `crates/pdf-composer/lib/pdf_composer/renderable.ex`:
+Create `lib/pdf_composer/renderable.ex`:
 
 ```elixir
 defmodule PdfComposer.Renderable do
@@ -333,7 +321,7 @@ defmodule PdfComposer.Renderable do
 end
 ```
 
-Create `crates/pdf-composer/lib/pdf_composer/region.ex`:
+Create `lib/pdf_composer/region.ex`:
 
 ```elixir
 defmodule PdfComposer.Region do
@@ -349,7 +337,7 @@ defmodule PdfComposer.Region do
 end
 ```
 
-Create `crates/pdf-composer/lib/pdf_composer/section.ex`:
+Create `lib/pdf_composer/section.ex`:
 
 ```elixir
 defmodule PdfComposer.Section do
@@ -379,7 +367,7 @@ end
 
 - [ ] **Step 4: Add API constructors and validation**
 
-Modify `crates/pdf-composer/lib/pdf_composer.ex`:
+Modify `lib/pdf_composer.ex`:
 
 ```elixir
 defmodule PdfComposer do
@@ -485,7 +473,6 @@ end
 Run:
 
 ```bash
-cd crates/pdf-composer
 mix test test/pdf_composer/document_test.exs
 ```
 
@@ -494,19 +481,19 @@ Expected: all document tests pass.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/pdf-composer/lib crates/pdf-composer/test
+git add lib test
 git commit -m "feat(pdf-composer): add sections and renderables"
 ```
 
 ## Task 3: Implement Numbering Engine
 
 **Files:**
-- Create: `crates/pdf-composer/lib/pdf_composer/numbering.ex`
-- Test: `crates/pdf-composer/test/pdf_composer/numbering_test.exs`
+- Create: `lib/pdf_composer/numbering.ex`
+- Test: `test/pdf_composer/numbering_test.exs`
 
 - [ ] **Step 1: Write numbering tests**
 
-Create `crates/pdf-composer/test/pdf_composer/numbering_test.exs`:
+Create `test/pdf_composer/numbering_test.exs`:
 
 ```elixir
 defmodule PdfComposer.NumberingTest do
@@ -551,7 +538,6 @@ end
 Run:
 
 ```bash
-cd crates/pdf-composer
 mix test test/pdf_composer/numbering_test.exs
 ```
 
@@ -559,7 +545,7 @@ Expected: compilation fails because `PdfComposer.Numbering` is not defined.
 
 - [ ] **Step 3: Implement numbering assignment**
 
-Create `crates/pdf-composer/lib/pdf_composer/numbering.ex`:
+Create `lib/pdf_composer/numbering.ex`:
 
 ```elixir
 defmodule PdfComposer.Numbering do
@@ -619,7 +605,6 @@ end
 Run:
 
 ```bash
-cd crates/pdf-composer
 mix test test/pdf_composer/numbering_test.exs
 ```
 
@@ -628,24 +613,24 @@ Expected: 2 tests pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/pdf-composer/lib/pdf_composer/numbering.ex crates/pdf-composer/test/pdf_composer/numbering_test.exs
+git add lib/pdf_composer/numbering.ex test/pdf_composer/numbering_test.exs
 git commit -m "feat(pdf-composer): add numbering engine"
 ```
 
 ## Task 4: Add Renderer and Backend Behaviours with Test Doubles
 
 **Files:**
-- Create: `crates/pdf-composer/lib/pdf_composer/renderer.ex`
-- Create: `crates/pdf-composer/lib/pdf_composer/backend.ex`
-- Create: `crates/pdf-composer/lib/pdf_composer/pdf.ex`
-- Create: `crates/pdf-composer/test/support/fake_renderer.ex`
-- Create: `crates/pdf-composer/test/support/fake_backend.ex`
-- Modify: `crates/pdf-composer/test/test_helper.exs`
-- Test: `crates/pdf-composer/test/pdf_composer/planner_test.exs`
+- Create: `lib/pdf_composer/renderer.ex`
+- Create: `lib/pdf_composer/backend.ex`
+- Create: `lib/pdf_composer/pdf.ex`
+- Create: `test/support/fake_renderer.ex`
+- Create: `test/support/fake_backend.ex`
+- Modify: `test/test_helper.exs`
+- Test: `test/pdf_composer/planner_test.exs`
 
 - [ ] **Step 1: Write behaviour tests through fakes**
 
-Create `crates/pdf-composer/test/pdf_composer/planner_test.exs`:
+Create `test/pdf_composer/planner_test.exs`:
 
 ```elixir
 defmodule PdfComposer.PlannerTest do
@@ -666,7 +651,6 @@ end
 Run:
 
 ```bash
-cd crates/pdf-composer
 mix test test/pdf_composer/planner_test.exs
 ```
 
@@ -674,7 +658,7 @@ Expected: failures for undefined behaviour modules, fake modules, and `PdfCompos
 
 - [ ] **Step 3: Add behaviour contracts and PDF struct**
 
-Create `crates/pdf-composer/lib/pdf_composer/renderer.ex`:
+Create `lib/pdf_composer/renderer.ex`:
 
 ```elixir
 defmodule PdfComposer.Renderer do
@@ -685,7 +669,7 @@ defmodule PdfComposer.Renderer do
 end
 ```
 
-Create `crates/pdf-composer/lib/pdf_composer/backend.ex`:
+Create `lib/pdf_composer/backend.ex`:
 
 ```elixir
 defmodule PdfComposer.Backend do
@@ -695,7 +679,7 @@ defmodule PdfComposer.Backend do
 end
 ```
 
-Create `crates/pdf-composer/lib/pdf_composer/pdf.ex`:
+Create `lib/pdf_composer/pdf.ex`:
 
 ```elixir
 defmodule PdfComposer.Pdf do
@@ -715,7 +699,7 @@ end
 
 - [ ] **Step 4: Add test support modules**
 
-Modify `crates/pdf-composer/test/test_helper.exs`:
+Modify `test/test_helper.exs`:
 
 ```elixir
 Code.require_file("support/fake_renderer.ex", __DIR__)
@@ -724,7 +708,7 @@ Code.require_file("support/fake_backend.ex", __DIR__)
 ExUnit.start()
 ```
 
-Create `crates/pdf-composer/test/support/fake_renderer.ex`:
+Create `test/support/fake_renderer.ex`:
 
 ```elixir
 defmodule PdfComposer.Test.FakeRenderer do
@@ -737,7 +721,7 @@ defmodule PdfComposer.Test.FakeRenderer do
 end
 ```
 
-Create `crates/pdf-composer/test/support/fake_backend.ex`:
+Create `test/support/fake_backend.ex`:
 
 ```elixir
 defmodule PdfComposer.Test.FakeBackend do
@@ -752,7 +736,7 @@ end
 
 - [ ] **Step 5: Wire render to behaviours**
 
-Modify the successful `render/1` branch in `crates/pdf-composer/lib/pdf_composer.ex`:
+Modify the successful `render/1` branch in `lib/pdf_composer.ex`:
 
 ```elixir
   def render(%Document{} = doc) do
@@ -801,7 +785,6 @@ Modify the successful `render/1` branch in `crates/pdf-composer/lib/pdf_composer
 Run:
 
 ```bash
-cd crates/pdf-composer
 mix test test/pdf_composer/document_test.exs test/pdf_composer/planner_test.exs
 ```
 
@@ -810,20 +793,20 @@ Expected: tests pass.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add crates/pdf-composer/lib crates/pdf-composer/test
+git add lib test
 git commit -m "feat(pdf-composer): add renderer and backend contracts"
 ```
 
 ## Task 5: Build Page Manifest and Apply Numbering
 
 **Files:**
-- Create: `crates/pdf-composer/lib/pdf_composer/manifest.ex`
-- Modify: `crates/pdf-composer/lib/pdf_composer.ex`
-- Test: `crates/pdf-composer/test/pdf_composer/planner_test.exs`
+- Create: `lib/pdf_composer/manifest.ex`
+- Modify: `lib/pdf_composer.ex`
+- Test: `test/pdf_composer/planner_test.exs`
 
 - [ ] **Step 1: Add manifest test**
 
-Append to `crates/pdf-composer/test/pdf_composer/planner_test.exs`:
+Append to `test/pdf_composer/planner_test.exs`:
 
 ```elixir
 test "render passes numbered manifest pages to backend" do
@@ -841,7 +824,6 @@ end
 Run:
 
 ```bash
-cd crates/pdf-composer
 mix test test/pdf_composer/planner_test.exs
 ```
 
@@ -849,7 +831,7 @@ Expected: assertion fails because metadata does not include `counters`.
 
 - [ ] **Step 3: Add manifest helper**
 
-Create `crates/pdf-composer/lib/pdf_composer/manifest.ex`:
+Create `lib/pdf_composer/manifest.ex`:
 
 ```elixir
 defmodule PdfComposer.Manifest do
@@ -868,7 +850,7 @@ end
 
 - [ ] **Step 4: Apply numbering before backend composition**
 
-Modify `PdfComposer.render/1` in `crates/pdf-composer/lib/pdf_composer.ex`:
+Modify `PdfComposer.render/1` in `lib/pdf_composer.ex`:
 
 ```elixir
   def render(%Document{} = doc) do
@@ -889,7 +871,6 @@ Modify `PdfComposer.render/1` in `crates/pdf-composer/lib/pdf_composer.ex`:
 Run:
 
 ```bash
-cd crates/pdf-composer
 mix test test/pdf_composer/numbering_test.exs test/pdf_composer/planner_test.exs
 ```
 
@@ -898,23 +879,22 @@ Expected: tests pass.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/pdf-composer/lib crates/pdf-composer/test
+git add lib test
 git commit -m "feat(pdf-composer): build numbered page manifest"
 ```
 
 ## Task 6: Add Rustler Native Backend MVP
 
 **Files:**
-- Modify: `Cargo.toml`
-- Create: `crates/pdf-composer/lib/pdf_composer/native.ex`
-- Create: `crates/pdf-composer/lib/pdf_composer/backends/native.ex`
-- Create: `crates/pdf-composer/native/pdf_composer/Cargo.toml`
-- Create: `crates/pdf-composer/native/pdf_composer/src/lib.rs`
-- Test: `crates/pdf-composer/test/pdf_composer/native_backend_test.exs`
+- Create: `lib/pdf_composer/native.ex`
+- Create: `lib/pdf_composer/backends/native.ex`
+- Create: `native/pdf_composer/Cargo.toml`
+- Create: `native/pdf_composer/src/lib.rs`
+- Test: `test/pdf_composer/native_backend_test.exs`
 
 - [ ] **Step 1: Write native backend smoke test**
 
-Create `crates/pdf-composer/test/pdf_composer/native_backend_test.exs`:
+Create `test/pdf_composer/native_backend_test.exs`:
 
 ```elixir
 defmodule PdfComposer.NativeBackendTest do
@@ -950,56 +930,29 @@ end
 Run:
 
 ```bash
-cd crates/pdf-composer
 PDF_COMPOSER_BUILD=1 mix test test/pdf_composer/native_backend_test.exs
 ```
 
 Expected: compilation fails because native modules are not defined.
 
-- [ ] **Step 3: Add Rust workspace member**
+- [ ] **Step 3: Add Elixir native wrapper**
 
-Modify root `Cargo.toml` workspace members to include the native crate:
-
-```toml
-members = ["crates/fulgur", "crates/fulgur-cli", "crates/fulgur-elixir/native/fulgur_elixir", "crates/fulgur-ruby", "crates/fulgur-vrt", "crates/fulgur-wasm", "crates/fulgur-wpt", "crates/pdf-composer/native/pdf_composer", "crates/pyfulgur"]
-```
-
-- [ ] **Step 4: Add Elixir native wrapper**
-
-Create `crates/pdf-composer/lib/pdf_composer/native.ex`:
+Create `lib/pdf_composer/native.ex`:
 
 ```elixir
 defmodule PdfComposer.Native do
   @moduledoc false
 
-  version = Mix.Project.config()[:version]
-  checksum_file = Path.expand("checksum-Elixir.PdfComposer.Native.exs", File.cwd!())
-
-  use RustlerPrecompiled,
+  use Rustler,
     otp_app: :pdf_composer,
     crate: "pdf_composer",
-    base_url: "https://github.com/fulgur-rs/fulgur/releases/download/pdf-composer-v#{version}",
-    force_build:
-      System.get_env("PDF_COMPOSER_BUILD") in ["1", "true"] or not File.exists?(checksum_file),
-    version: version,
-    targets: ~w(
-      aarch64-apple-darwin
-      aarch64-unknown-linux-gnu
-      aarch64-unknown-linux-musl
-      x86_64-apple-darwin
-      x86_64-pc-windows-gnu
-      x86_64-pc-windows-msvc
-      x86_64-unknown-linux-gnu
-      x86_64-unknown-linux-musl
-    ),
-    nif_versions: ["2.15"],
     path: "native/pdf_composer"
 
   def compose(_pages, _opts), do: :erlang.nif_error(:nif_not_loaded)
 end
 ```
 
-Create `crates/pdf-composer/lib/pdf_composer/backends/native.ex`:
+Create `lib/pdf_composer/backends/native.ex`:
 
 ```elixir
 defmodule PdfComposer.Backends.Native do
@@ -1014,19 +967,17 @@ defmodule PdfComposer.Backends.Native do
 end
 ```
 
-- [ ] **Step 5: Add Rust NIF crate**
+- [ ] **Step 4: Add Rust NIF crate**
 
-Create `crates/pdf-composer/native/pdf_composer/Cargo.toml`:
+Create `native/pdf_composer/Cargo.toml`:
 
 ```toml
 [package]
 name = "pdf_composer"
 version = "0.1.0"
-edition.workspace = true
-rust-version.workspace = true
-license.workspace = true
-repository.workspace = true
-homepage.workspace = true
+edition = "2024"
+rust-version = "1.85.0"
+license = "MIT OR Apache-2.0"
 publish = false
 
 [lib]
@@ -1038,7 +989,7 @@ lopdf = "0.40.0"
 rustler = "0.37.3"
 ```
 
-Create `crates/pdf-composer/native/pdf_composer/src/lib.rs`:
+Create `native/pdf_composer/src/lib.rs`:
 
 ```rust
 use rustler::{Encoder, Env, Term};
@@ -1072,35 +1023,34 @@ fn compose<'a>(env: Env<'a>, pages: Vec<Term<'a>>, _opts: Vec<(rustler::Atom, Te
 rustler::init!("Elixir.PdfComposer.Native");
 ```
 
-- [ ] **Step 6: Run native backend test**
+- [ ] **Step 5: Run native backend test**
 
 Run:
 
 ```bash
-cd crates/pdf-composer
 PDF_COMPOSER_BUILD=1 mix test test/pdf_composer/native_backend_test.exs
 ```
 
 Expected: native backend smoke test passes.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add Cargo.toml crates/pdf-composer/lib/pdf_composer/native.ex crates/pdf-composer/lib/pdf_composer/backends/native.ex crates/pdf-composer/native crates/pdf-composer/test/pdf_composer/native_backend_test.exs
+git add lib/pdf_composer/native.ex lib/pdf_composer/backends/native.ex native test/pdf_composer/native_backend_test.exs
 git commit -m "feat(pdf-composer): add native backend scaffold"
 ```
 
 ## Task 7: Add Managed Playwright Renderer
 
 **Files:**
-- Create: `crates/pdf-composer/package.json`
-- Create: `crates/pdf-composer/priv/playwright/render.js`
-- Create: `crates/pdf-composer/lib/pdf_composer/renderers/playwright.ex`
-- Test: `crates/pdf-composer/test/pdf_composer/playwright_test.exs`
+- Create: `package.json`
+- Create: `priv/playwright/render.js`
+- Create: `lib/pdf_composer/renderers/playwright.ex`
+- Test: `test/pdf_composer/playwright_test.exs`
 
 - [ ] **Step 1: Write Playwright renderer test**
 
-Create `crates/pdf-composer/test/pdf_composer/playwright_test.exs`:
+Create `test/pdf_composer/playwright_test.exs`:
 
 ```elixir
 defmodule PdfComposer.PlaywrightTest do
@@ -1125,7 +1075,6 @@ end
 Run:
 
 ```bash
-cd crates/pdf-composer
 mix test test/pdf_composer/playwright_test.exs
 ```
 
@@ -1133,7 +1082,7 @@ Expected: compilation fails because `PdfComposer.Renderers.Playwright` is not de
 
 - [ ] **Step 3: Add Node package metadata**
 
-Create `crates/pdf-composer/package.json`:
+Create `package.json`:
 
 ```json
 {
@@ -1150,7 +1099,7 @@ Create `crates/pdf-composer/package.json`:
 
 - [ ] **Step 4: Add Playwright helper**
 
-Create `crates/pdf-composer/priv/playwright/render.js`:
+Create `priv/playwright/render.js`:
 
 ```javascript
 const { chromium } = require("playwright");
@@ -1196,7 +1145,7 @@ main().catch(error => {
 
 - [ ] **Step 5: Add Elixir Playwright renderer**
 
-Create `crates/pdf-composer/lib/pdf_composer/renderers/playwright.ex`:
+Create `lib/pdf_composer/renderers/playwright.ex`:
 
 ```elixir
 defmodule PdfComposer.Renderers.Playwright do
@@ -1251,7 +1200,6 @@ end
 Run:
 
 ```bash
-cd crates/pdf-composer
 npm install
 npm run playwright:install
 mix test test/pdf_composer/playwright_test.exs
@@ -1262,21 +1210,21 @@ Expected: Playwright test passes and returns bytes starting with `%PDF-`.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add crates/pdf-composer/package.json crates/pdf-composer/package-lock.json crates/pdf-composer/priv crates/pdf-composer/lib/pdf_composer/renderers/playwright.ex crates/pdf-composer/test/pdf_composer/playwright_test.exs
+git add package.json package-lock.json priv lib/pdf_composer/renderers/playwright.ex test/pdf_composer/playwright_test.exs
 git commit -m "feat(pdf-composer): add playwright html renderer"
 ```
 
 ## Task 8: Compose End-to-End Cover, Body, Footer, and Backcover
 
 **Files:**
-- Modify: `crates/pdf-composer/lib/pdf_composer.ex`
-- Modify: `crates/pdf-composer/lib/pdf_composer/backends/native.ex`
-- Modify: `crates/pdf-composer/native/pdf_composer/src/lib.rs`
-- Test: `crates/pdf-composer/test/pdf_composer/end_to_end_test.exs`
+- Modify: `lib/pdf_composer.ex`
+- Modify: `lib/pdf_composer/backends/native.ex`
+- Modify: `native/pdf_composer/src/lib.rs`
+- Test: `test/pdf_composer/end_to_end_test.exs`
 
 - [ ] **Step 1: Write end-to-end test**
 
-Create `crates/pdf-composer/test/pdf_composer/end_to_end_test.exs`:
+Create `test/pdf_composer/end_to_end_test.exs`:
 
 ```elixir
 defmodule PdfComposer.EndToEndTest do
@@ -1317,7 +1265,6 @@ end
 Run:
 
 ```bash
-cd crates/pdf-composer
 PDF_COMPOSER_BUILD=1 mix test test/pdf_composer/end_to_end_test.exs
 ```
 
@@ -1325,7 +1272,7 @@ Expected: failure if overlay rendering is not wired into the render pipeline.
 
 - [ ] **Step 3: Render footer overlays after numbering**
 
-Modify `PdfComposer.render/1` in `crates/pdf-composer/lib/pdf_composer.ex` so numbered pages with a footer render the footer HTML with concrete assigns:
+Modify `PdfComposer.render/1` in `lib/pdf_composer.ex` so numbered pages with a footer render the footer HTML with concrete assigns:
 
 ```elixir
   def render(%Document{} = doc) do
@@ -1370,8 +1317,11 @@ Modify `PdfComposer.render/1` in `crates/pdf-composer/lib/pdf_composer.ex` so nu
 
 The native backend scaffold returns a valid smoke PDF so the Elixir pipeline can be exercised end to end. Create the implementation issue for real page import and overlay composition before closing this milestone:
 
-```bash
-bd create --title="Implement real PDF page import in pdf_composer native backend" --description="Replace the native backend smoke PDF with lopdf-based import and overlay composition for content PDFs, backgrounds, and rendered footer/header overlays." --type=task --priority=1
+```markdown
+# Follow-up: Implement real PDF page import in native backend
+
+Replace the native backend smoke PDF with lopdf-based import and overlay
+composition for content PDFs, backgrounds, and rendered footer/header overlays.
 ```
 
 - [ ] **Step 5: Run end-to-end test**
@@ -1379,7 +1329,6 @@ bd create --title="Implement real PDF page import in pdf_composer native backend
 Run:
 
 ```bash
-cd crates/pdf-composer
 PDF_COMPOSER_BUILD=1 mix test test/pdf_composer/end_to_end_test.exs
 ```
 
@@ -1388,19 +1337,26 @@ Expected: test passes with a PDF byte result and metadata `page_count: 3`.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/pdf-composer/lib crates/pdf-composer/native crates/pdf-composer/test/pdf_composer/end_to_end_test.exs .beads
+mkdir -p docs/follow-ups
+cat > docs/follow-ups/native-pdf-import.md <<'EOF'
+# Follow-up: Implement real PDF page import in native backend
+
+Replace the native backend smoke PDF with lopdf-based import and overlay
+composition for content PDFs, backgrounds, and rendered footer/header overlays.
+EOF
+git add lib native test/pdf_composer/end_to_end_test.exs docs/follow-ups/native-pdf-import.md
 git commit -m "feat(pdf-composer): compose first end-to-end document"
 ```
 
 ## Task 9: Documentation and Quality Gates
 
 **Files:**
-- Modify: `crates/pdf-composer/README.md`
+- Modify: `README.md`
 - Test: all package tests
 
 - [ ] **Step 1: Update README with usage**
 
-Replace `crates/pdf-composer/README.md` with:
+Replace `README.md` with:
 
 ````markdown
 # pdf_composer
@@ -1441,7 +1397,6 @@ doc =
 Run:
 
 ```bash
-cd crates/pdf-composer
 mix format
 ```
 
@@ -1452,15 +1407,21 @@ Expected: command exits 0.
 Run:
 
 ```bash
-cd crates/pdf-composer
 PDF_COMPOSER_BUILD=1 mix test
 ```
 
-Expected: all tests pass. When Playwright is absent from the execution environment, run this fallback command and create the shown beads issue:
+Expected: all tests pass. When Playwright is absent from the execution environment, run this fallback command and record the shown follow-up file:
 
 ```bash
 mix test --exclude playwright
-bd create --title="Install Playwright runtime for pdf_composer integration tests" --description="The pdf_composer Playwright integration tests require npm install and npm run playwright:install inside crates/pdf-composer. The non-Playwright suite passed with mix test --exclude playwright." --type=task --priority=2
+mkdir -p docs/follow-ups
+cat > docs/follow-ups/playwright-runtime.md <<'EOF'
+# Follow-up: Install Playwright runtime for integration tests
+
+The pdf_composer Playwright integration tests require npm install and
+npm run playwright:install. The non-Playwright suite passed with
+mix test --exclude playwright.
+EOF
 ```
 
 - [ ] **Step 4: Run Rust checks**
@@ -1468,7 +1429,7 @@ bd create --title="Install Playwright runtime for pdf_composer integration tests
 Run:
 
 ```bash
-cargo check -p pdf_composer
+cargo check --manifest-path native/pdf_composer/Cargo.toml
 ```
 
 Expected: Rust native crate compiles.
@@ -1476,7 +1437,7 @@ Expected: Rust native crate compiles.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/pdf-composer
+git add README.md docs/follow-ups test lib native mix.exs package.json package-lock.json .formatter.exs
 git commit -m "docs(pdf-composer): document initial composer api"
 ```
 
@@ -1490,31 +1451,42 @@ Run:
 git status --short --branch
 ```
 
-Expected: only intentional changes are present. Existing unrelated `output.pdf` may remain untracked and must not be committed unless the user explicitly asks.
+Expected: only intentional changes are present.
 
-- [ ] **Step 2: Close or update beads issue**
+- [ ] **Step 2: Record completion notes**
 
-If the implementation milestone is complete:
+Create `docs/handoff.md`:
 
-```bash
-bd close fulgur-7ds --reason="Design and implementation plan completed; implementation milestone handled by follow-up issues if needed."
+```markdown
+# Handoff
+
+## Completed
+
+- Scaffolded standalone `pdf_composer` Mix package.
+- Added document model, renderables, numbering, renderer/backend behaviours,
+  managed Playwright renderer, and native backend scaffold.
+- Added tests and README usage.
+
+## Follow-ups
+
+- See `docs/follow-ups/` for remaining environment or native backend work.
 ```
 
-If implementation follow-up remains:
+Stage and commit it:
 
 ```bash
-bd update fulgur-7ds --notes "Implementation plan completed. Follow-up issues have been filed for remaining native PDF import/composition work."
+git add docs/handoff.md docs/follow-ups
+git commit -m "docs: add implementation handoff"
 ```
 
-- [ ] **Step 3: Push beads and git**
+- [ ] **Step 3: Push git**
 
 Run:
 
 ```bash
-bd dolt push
 git pull --rebase
 git push
 git status --short --branch
 ```
 
-Expected: `git push` succeeds and branch is up to date with origin. If `bd dolt push` reports no remote configured, include that exact note in the handoff.
+Expected: `git push` succeeds and branch is up to date with origin. If the new project does not have a git remote yet, record that in `docs/handoff.md` and leave the branch committed locally.
